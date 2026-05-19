@@ -1,13 +1,12 @@
-"""Driver for JEVAmet VCU vacuum pressure controller.
+"""Driver for JEVAmet VCU vacuum pressure controller (read-only).
 
 Implements the full serial protocol for reading pressure values,
-sensor identification, and controlling HV/Degas functions.
+sensor identification, and setpoint status.
 
 Protocol summary (from manual):
   - RS232 or RS485, 8N1, 9600/19200/38400 baud
   - ASCII strings, comma delimited, CR terminated (0x0D)
   - Read:  [Address] Command <CR>  ->  Response <CR>
-  - Write: [Address] Command , [Parameter] <CR>  ->  OK <CR>
   - Error: ? <TAB> X <TAB> [...]  (X = I/P/C/S/K)
 """
 
@@ -170,26 +169,6 @@ class VCUController(BaseDevice):
             except ValueError:
                 pass
         return result
-
-    def hv_on(self) -> bool:
-        resp = self._send_and_verify("SHV", "1")
-        return resp == "OK"
-
-    def hv_off(self) -> bool:
-        resp = self._send_and_verify("SHV", "0")
-        return resp == "OK"
-
-    def degas_on(self) -> bool:
-        resp = self._send_and_verify("SDG", "1")
-        return resp == "OK"
-
-    def degas_off(self) -> bool:
-        resp = self._send_and_verify("SDG", "0")
-        return resp == "OK"
-
-    def save_config(self) -> bool:
-        resp = self._send_and_verify("SAC")
-        return resp == "OK"
 
     @property
     def sensor_name(self) -> str:

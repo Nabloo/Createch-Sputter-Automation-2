@@ -198,51 +198,6 @@ class TestVCUControllerReadCommands(unittest.TestCase):
             self.assertAlmostEqual(result["setpoint_value"], 1.5e-3)
 
 
-class TestVCUControllerWriteCommands(unittest.TestCase):
-    """Test write (control) commands."""
-
-    def setUp(self):
-        self.config = {
-            "port": "COM6",
-            "baudrate": 9600,
-            "address": 0,
-            "unit": "mbar",
-        }
-        self.device = VCUController(self.config)
-
-    def test_hv_on(self):
-        with patch.object(self.device, '_send_command', return_value="OK") as mock:
-            result = self.device.hv_on()
-            self.assertTrue(result)
-            mock.assert_called_once_with("0SHV,1")
-
-    def test_hv_off(self):
-        with patch.object(self.device, '_send_command', return_value="OK") as mock:
-            result = self.device.hv_off()
-            self.assertTrue(result)
-            mock.assert_called_once_with("0SHV,0")
-
-    def test_hv_on_failure(self):
-        with patch.object(self.device, '_send_command', return_value="?\tP\tInvalid param"):
-            with self.assertRaises(VCUProtocolError):
-                self.device.hv_on()
-
-    def test_degas_on(self):
-        with patch.object(self.device, '_send_command', return_value="OK"):
-            self.assertTrue(self.device.degas_on())
-
-    def test_degas_off(self):
-        with patch.object(self.device, '_send_command', return_value="OK"):
-            self.assertTrue(self.device.degas_off())
-
-    def test_save_config(self):
-        with patch.object(self.device, '_send_command', return_value="OK"):
-            self.assertTrue(self.device.save_config())
-
-    def test_save_config_failure(self):
-        with patch.object(self.device, '_send_command', return_value="ERROR"):
-            self.assertFalse(self.device.save_config())
-
 
 class TestVCUControllerPoll(unittest.TestCase):
     """Test the poll() method."""
