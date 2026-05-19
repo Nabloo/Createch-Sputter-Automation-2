@@ -366,7 +366,8 @@ Implement:
 
 * full protocol handling,
 * pressure polling,
-* sensor identification,
+* pressure status,
+* pressure units,
 * timeout handling,
 * reconnect handling,
 * command parsing.
@@ -380,9 +381,7 @@ tests/test_vcu_controller.py
 
 ### Verify
 
-```bash
-pytest tests/test_vcu_controller.py -v
-```
+Try to connect to a VCU at COM6. Expected behavior: No device found.
 
 ---
 
