@@ -82,7 +82,6 @@ class VCUController(BaseDevice):
     def __init__(self, config: Dict[str, Any]) -> None:
         super().__init__(config)
         self._address: int = config.get("address", 0)
-        self._pressure_unit: str = config.get("unit", "mbar")
         self._sensor_id: Optional[int] = None
         self._firmware_version: Optional[str] = None
 
@@ -108,6 +107,7 @@ class VCUController(BaseDevice):
     def _after_connect(self) -> None:
         try:
             self._sensor_id = self.read_sensor_id()
+            self._pressure_unit = self.read_pressure_unit()
             logger.info(
                 "%s: sensor ID = %d (%s)", self.device_id,
                 self._sensor_id,
@@ -137,7 +137,9 @@ class VCUController(BaseDevice):
 
     def _send_and_verify(self, command: str, *params: str) -> str:
         cmd = self._build_command(command, *params)
+        logger.debug("(VCU) Sending command: %s", cmd)
         response = self._send_command(cmd)
+        logger.debug("(VCU) Received response: %s", response)
         if response.startswith("?\t"):
             self._raise_protocol_error(response)
         return response
@@ -176,6 +178,13 @@ class VCUController(BaseDevice):
             except ValueError:
                 pass
         return result
+
+    def read_pressure_unit(self) -> str:
+        """
+        0 → mbar, 1 → Torr, 2 → Pa
+        """
+        resp = self._send_and_verify('RGP').split(',')[0]
+        return {'0': 'mbar', '1': 'Torr', '2': 'Pa'}.get(resp, 'unknown')
 
     @property
     def sensor_id(self) -> Optional[int]:

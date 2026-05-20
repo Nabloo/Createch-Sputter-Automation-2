@@ -17,7 +17,6 @@ def create_device() -> VCUController:
         "port": VCU_PORT,
         "baudrate": VCU_BAUDRATE,
         "address": VCU_ADDRESS,
-        "unit": "mbar",
         "timeout": 1.0,
     })
 
@@ -29,3 +28,5 @@ for i in range(1,4):
 
 print(vcu.read_firmware())
 print(vcu.read_setpoint_status())
+print(vcu.read_pressure_unit())
+
