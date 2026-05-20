@@ -129,42 +129,42 @@ class TestVCUControllerReadCommands(unittest.TestCase):
         self.device = VCUController(self.config)
 
     def test_read_pressure_normal(self):
-        with patch.object(self.device, '_send_command', return_value="1.23E-3,0"):
-            pressure, status = self.device.read_pressure()
+        with patch.object(self.device, '_send_command', return_value="0,1.23E-3"):
+            pressure, status = self.device.read_pressure(1)
             self.assertAlmostEqual(pressure, 1.23e-3)
             self.assertEqual(status, 0)
 
     def test_read_pressure_high_vacuum(self):
-        with patch.object(self.device, '_send_command', return_value="5.0E-10,0"):
-            pressure, status = self.device.read_pressure()
+        with patch.object(self.device, '_send_command', return_value="0,5.0E-10"):
+            pressure, status = self.device.read_pressure(1)
             self.assertAlmostEqual(pressure, 5.0e-10)
             self.assertEqual(status, 0)
 
     def test_read_pressure_below_range(self):
-        with patch.object(self.device, '_send_command', return_value="0.0,1"):
-            pressure, status = self.device.read_pressure()
+        with patch.object(self.device, '_send_command', return_value="1,0.0"):
+            pressure, status = self.device.read_pressure(1)
             self.assertAlmostEqual(pressure, 0.0)
             self.assertEqual(status, 1)
 
     def test_read_pressure_above_range(self):
-        with patch.object(self.device, '_send_command', return_value="9999.99,2"):
-            pressure, status = self.device.read_pressure()
+        with patch.object(self.device, '_send_command', return_value="2,9999.99"):
+            pressure, status = self.device.read_pressure(1)
             self.assertAlmostEqual(pressure, 9999.99)
             self.assertEqual(status, 2)
 
     def test_read_pressure_sensor_off(self):
-        with patch.object(self.device, '_send_command', return_value="0.0,5"):
-            pressure, status = self.device.read_pressure()
+        with patch.object(self.device, '_send_command', return_value="5,0.0"):
+            pressure, status = self.device.read_pressure(1)
             self.assertEqual(status, 5)
 
     def test_read_pressure_no_status(self):
-        with patch.object(self.device, '_send_command', return_value="1.0E-6"):
-            pressure, status = self.device.read_pressure()
+        with patch.object(self.device, '_send_command', return_value="0,1.0E-6"):
+            pressure, status = self.device.read_pressure(1)
             self.assertAlmostEqual(pressure, 1.0e-6)
             self.assertEqual(status, 0)
 
     def test_read_pressure_with_sensor_index(self):
-        with patch.object(self.device, '_send_command', return_value="2.5E-4,0") as mock:
+        with patch.object(self.device, '_send_command', return_value="0,2.5E-4") as mock:
             pressure, status = self.device.read_pressure(channel=2)
             self.assertAlmostEqual(pressure, 2.5e-4)
             mock.assert_called_once_with("RPV 2")
@@ -211,24 +211,28 @@ class TestVCUControllerPoll(unittest.TestCase):
         self.device = VCUController(self.config)
 
     def test_poll_normal(self):
-        with patch.object(self.device, '_send_command', return_value="1.23E-3,0"):
+        with patch.object(self.device, '_send_command', return_value="0,1.23E-3"):
             result = self.device.poll()
-            self.assertAlmostEqual(result["pressure"], 1.23e-3)
-            self.assertEqual(result["status_code"], 0)
-            self.assertEqual(result["status_text"], "OK")
-            self.assertEqual(result["unit"], "mbar")
+            self.assertIn(1, result)
+            ch = result[1]
+            self.assertAlmostEqual(ch["pressure"], 1.23e-3)
+            self.assertEqual(ch["status_code"], 0)
+            self.assertEqual(ch["status_text"], "OK")
+            self.assertEqual(ch["unit"], "mbar")
 
     def test_poll_error_status(self):
-        with patch.object(self.device, '_send_command', return_value="0.0,7"):
+        with patch.object(self.device, '_send_command', return_value="7,0.0"):
             result = self.device.poll()
-            self.assertEqual(result["status_code"], 7)
-            self.assertEqual(result["status_text"], "Sensor error")
+            ch = result[1]
+            self.assertEqual(ch["status_code"], 7)
+            self.assertEqual(ch["status_text"], "Sensor error")
 
     def test_poll_unknown_status(self):
-        with patch.object(self.device, '_send_command', return_value="0.0,99"):
+        with patch.object(self.device, '_send_command', return_value="99,0.0"):
             result = self.device.poll()
-            self.assertEqual(result["status_code"], 99)
-            self.assertEqual(result["status_text"], "Unknown (99)")
+            ch = result[1]
+            self.assertEqual(ch["status_code"], 99)
+            self.assertEqual(ch["status_text"], "Unknown (99)")
 
 
 class TestVCUControllerConnectLifecycle(unittest.TestCase):
@@ -245,7 +249,7 @@ class TestVCUControllerConnectLifecycle(unittest.TestCase):
 
     def test_after_connect_with_sensor_and_firmware(self):
         with patch.object(self.device, '_send_command') as mock_send:
-            mock_send.side_effect = ["1", "VCU-3.0"]
+            mock_send.side_effect = ["1", "0", "VCU-3.0"]
             self.device._after_connect()
             self.assertEqual(self.device._sensor_id, 1)
             self.assertEqual(self.device.sensor_name, "Ptr (Penning)")
@@ -260,7 +264,7 @@ class TestVCUControllerConnectLifecycle(unittest.TestCase):
             self.assertIsNone(self.device._firmware_version)
 
     def test_sensor_name_after_connect(self):
-        with patch.object(self.device, '_send_command', side_effect=["5", "VCU-3.0"]):
+        with patch.object(self.device, '_send_command', side_effect=["5", "0", "VCU-3.0"]):
             self.device._after_connect()
             self.assertEqual(self.device.sensor_name, "BA (Bayard-Alpert)")
 

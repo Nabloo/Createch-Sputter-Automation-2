@@ -65,14 +65,17 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
     def test_poll_returns_valid_dict(self):
         """poll() should return all expected keys with correct types."""
         result = self.device.poll()
-        self.assertIn("pressure", result)
-        self.assertIn("status_code", result)
-        self.assertIn("status_text", result)
-        self.assertIn("unit", result)
-        self.assertIsInstance(result["pressure"], float)
-        self.assertIsInstance(result["status_code"], int)
-        self.assertEqual(result["unit"], "mbar")
-        self.assertIn(result["status_code"], STATUS_TEXTS)
+        self.assertIsInstance(result, dict)
+        self.assertGreaterEqual(len(result), 1)
+        ch1 = result[1]
+        self.assertIn("pressure", ch1)
+        self.assertIn("status_code", ch1)
+        self.assertIn("status_text", ch1)
+        self.assertIn("unit", ch1)
+        self.assertIsInstance(ch1["pressure"], float)
+        self.assertIsInstance(ch1["status_code"], int)
+        self.assertEqual(ch1["unit"], "mbar")
+        self.assertIn(ch1["status_code"], STATUS_TEXTS)
 
     def test_all_three_sensors_read_pressure(self):
         """All 3 connected sensors (channels 1-3) should return valid pressure with a known status."""

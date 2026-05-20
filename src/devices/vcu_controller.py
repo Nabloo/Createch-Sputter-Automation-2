@@ -85,7 +85,7 @@ class VCUController(BaseDevice):
         self._sensor_id: Optional[int] = None
         self._firmware_version: Optional[str] = None
         self._number_of_pressure_sensors: int = config.get("number of pressure sensors", 1)
-        self._pressure_unit: str = "mbar"
+        self._pressure_unit: str = config.get("unit", "mbar")
 
     @property
     def device_id(self) -> str:
@@ -95,14 +95,17 @@ class VCUController(BaseDevice):
     def channels(self) -> list[str]:
         return ["pressure", "status_code", "status_text"]
 
-    def poll(self) -> Dict[Dict[str, Any]]:
+    def poll(self) -> Dict[int, Dict[str, Any]]:
+        """Poll all pressure sensors.
+
+        Returns:
+            Dict mapping integer channel number to a dict with keys
+            ``pressure``, ``status_code``, ``status_text``, ``unit``.
         """
-        returns dict with the channel number as key. For each sensor there is a dict with the pressure, status_code, status text, and unit.
-        """
-        data = {}
+        data: Dict[int, Dict[str, Any]] = {}
         for channel in range(1, self._number_of_pressure_sensors + 1):
             pressure, status_code = self.read_pressure(channel)
-            channel_data = {
+            data[channel] = {
                 "pressure": pressure,
                 "status_code": status_code,
                 "status_text": STATUS_TEXTS.get(
@@ -110,7 +113,6 @@ class VCUController(BaseDevice):
                 ),
                 "unit": self._pressure_unit,
             }
-            data[f"channel_{channel}"] = channel_data
         return data
 
     def _after_connect(self) -> None:

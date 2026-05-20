@@ -13,7 +13,8 @@ from src.devices.base_device import BaseDevice
 class MockDevice(BaseDevice):
     """A minimal device driver for testing the acquisition engine."""
 
-    def __init__(self, config: Dict[str, Any], device_id: str = "Mock-0"):
+    def __init__(self, device_id: str = "Mock-0", config: Dict[str, Any] | None = None):
+        _ = config  # unused – MockDevice is self-contained
         self._config: Dict[str, Any] = {"port": "MOCK"}
         self._serial = None
         self._lock = threading.RLock()
