@@ -18,9 +18,14 @@ def create_device() -> VCUController:
         "baudrate": VCU_BAUDRATE,
         "address": VCU_ADDRESS,
         "unit": "mbar",
-        "timeout": 5.0,
+        "timeout": 1.0,
     })
 
 vcu = create_device()
 vcu.connect()
-print(vcu._send_command("RVN"))
+for i in range(1,4):
+    print(vcu.read_pressure(i))
+    print(vcu.read_sensor_id(i))
+
+print(vcu.read_firmware())
+print(vcu.read_setpoint_status())

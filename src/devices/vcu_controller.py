@@ -152,9 +152,9 @@ class VCUController(BaseDevice):
 
     def read_pressure(self, channel: int = 1) -> Tuple[float, int]:
         resp = self._send_and_verify(f"RPV {channel}")
-        parts = resp.split(",")
-        pressure = float(parts[0])
-        status_code = int(parts[1]) if len(parts) > 1 else 0
+        parts = resp.strip().split(",")
+        pressure = float(parts[1])
+        status_code = int(parts[0])
         return pressure, status_code
 
     def read_sensor_id(self, channel: int = 1) -> int:
