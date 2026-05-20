@@ -84,6 +84,8 @@ class VCUController(BaseDevice):
         self._address: int = config.get("address", 0)
         self._sensor_id: Optional[int] = None
         self._firmware_version: Optional[str] = None
+        self._number_of_pressure_sensors: int = config.get("number of pressure sensors", 1)
+        self._pressure_unit: str = "mbar"
 
     @property
     def device_id(self) -> str:
@@ -93,16 +95,23 @@ class VCUController(BaseDevice):
     def channels(self) -> list[str]:
         return ["pressure", "status_code", "status_text"]
 
-    def poll(self) -> Dict[str, Any]:
-        pressure, status_code = self.read_pressure()
-        return {
-            "pressure": pressure,
-            "status_code": status_code,
-            "status_text": STATUS_TEXTS.get(
-                status_code, f"Unknown ({status_code})"
-            ),
-            "unit": self._pressure_unit,
-        }
+    def poll(self) -> list[Dict[str, Any]]:
+        """
+        returns array with a dict for each sensor
+        """
+        data = []
+        for channel in range(1, self._number_of_pressure_sensors + 1):
+            pressure, status_code = self.read_pressure(channel)
+            channel_data = {
+                "pressure": pressure,
+                "status_code": status_code,
+                "status_text": STATUS_TEXTS.get(
+                    status_code, f"Unknown ({status_code})"
+                ),
+                "unit": self._pressure_unit,
+            }
+            data.append(channel_data)
+        return data
 
     def _after_connect(self) -> None:
         try:
@@ -152,7 +161,7 @@ class VCUController(BaseDevice):
             raise VCUProtocolError(f"{self.device_id}: {msg}")
         raise VCUProtocolError(f"{self.device_id}: {response.strip()}")
 
-    def read_pressure(self, channel: int = 1) -> Tuple[float, int]:
+    def read_pressure(self, channel: int) -> Tuple[float, int]:
         resp = self._send_and_verify(f"RPV {channel}")
         parts = resp.strip().split(",")
         pressure = float(parts[1])

@@ -5,6 +5,14 @@ from src.devices.vcu_controller import (
     VCUProtocolError,
 )
 import serial
+import threading
+import time
+import unittest
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+from src.acquisition.engine import AcquisitionEngine
+from src.devices.base_device import BaseDevice
 
 VCU_PORT = "COM6"
 VCU_BAUDRATE = 19200
@@ -18,15 +26,21 @@ def create_device() -> VCUController:
         "baudrate": VCU_BAUDRATE,
         "address": VCU_ADDRESS,
         "timeout": 1.0,
+        "number of pressure sensors": 3,
     })
 
-vcu = create_device()
-vcu.connect()
-for i in range(1,4):
-    print(vcu.read_pressure(i))
-    print(vcu.read_sensor_id(i))
+def print_measurement(device_id, timestamp, data):
+    print("Device_id:", device_id)
+    print("Timestamp:", timestamp)
+    print("Measurement:", data)
 
-print(vcu.read_firmware())
-print(vcu.read_setpoint_status())
-print(vcu.read_pressure_unit())
+vcu = create_device()
+engine = AcquisitionEngine()
+engine.add_device(vcu)
+engine.subscribe(print_measurement)
+engine.start()
+
+time.sleep(10)
+engine.stop()
+engine.remove_device(vcu.device_id)
 
