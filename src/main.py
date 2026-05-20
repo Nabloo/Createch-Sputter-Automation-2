@@ -9,7 +9,10 @@ _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from PySide6.QtWidgets import QApplication
+
 from src.config import load_config, DEFAULT_CONFIG_PATH
+from src.gui.main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +39,19 @@ def main() -> None:
     num_devices = len(config.get("devices", []))
     logger.info("Configuration loaded from %s (%d device(s) configured)", config_path, num_devices)
 
-    logger.info("Sputter Automation initialized (T1 complete). GUI launch pending (T5).")
+    # ---- Launch GUI ----
+    app = QApplication(sys.argv)
+    app.setApplicationName("SputterAutomation")
+    app.setOrganizationName("SputterAutomation")
+
+    window = MainWindow(app)
+    window.show()
+
+    # Restore persisted dock layout
+    window.dock_manager.restore_layout()
+
+    logger.info("Main window shown – entering event loop")
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

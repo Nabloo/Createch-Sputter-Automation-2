@@ -201,12 +201,34 @@ class TestDataStoreThreadSafety(unittest.TestCase):
             except Exception as e:
                 errors.append(e)
 
-        threads = []
-        for wid in ["W1", "W2", "W3"]:
-            t = threading.Thread(target=writer, args=(wid,))
-            threads.append(t)
-        for _ in range(3):
-            t = threading.Thread(target=reader, daemon=True)
-            threads.append(t)
+        # Separate lists for clarity rather than relying on daemon flags
+        writers = [
+            threading.Thread(target=writer, args=(wid,))
+            for wid in ["W1", "W2", "W3"]
+        ]
+        readers = [
+            threading.Thread(target=reader, daemon=True)
+            for _ in range(3)
+        ]
 
-    
+        # Start all threads
+        for t in writers + readers:
+            t.start()
+
+        # Wait for writer threads to finish
+        for t in writers:
+            t.join()
+
+        # Signal readers to stop
+        done.set()
+
+        # Wait for reader threads
+        for t in readers:
+            t.join(timeout=2.0)
+
+        # Assertions
+        self.assertEqual(len(errors), 0, f"Errors during concurrent access: {errors}")
+        self.assertCountEqual(store.device_ids, ["W1", "W2", "W3"])
+        for wid in ["W1", "W2", "W3"]:
+            self.assertEqual(store.get_value(wid, "count"), 49)
+            self.assertEqual(len(store.get_history(wid, "count")), 50)
