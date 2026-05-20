@@ -58,20 +58,20 @@ class TestVCUControllerProtocol(unittest.TestCase):
 
     def test_build_command_read(self):
         cmd = self.device._build_command("RPV")
-        self.assertEqual(cmd, "0RPV")
+        self.assertEqual(cmd, "RPV")
 
-    def test_build_command_read_with_address(self):
+    def test_build_command_read_no_address(self):
         dev = VCUController(dict(self.config, address=3))
         cmd = dev._build_command("RID")
-        self.assertEqual(cmd, "3RID")
+        self.assertEqual(cmd, "RID")
 
     def test_build_command_write(self):
         cmd = self.device._build_command("SHV", "1")
-        self.assertEqual(cmd, "0SHV,1")
+        self.assertEqual(cmd, "SHV,1")
 
     def test_build_command_multiple_params(self):
         cmd = self.device._build_command("CMD", "a", "b", "c")
-        self.assertEqual(cmd, "0CMD,a,b,c")
+        self.assertEqual(cmd, "CMD,a,b,c")
 
 
 class TestVCUControllerSendAndVerify(unittest.TestCase):
@@ -90,13 +90,13 @@ class TestVCUControllerSendAndVerify(unittest.TestCase):
         with patch.object(self.device, '_send_command', return_value="OK") as mock:
             result = self.device._send_and_verify("SHV", "1")
             self.assertEqual(result, "OK")
-            mock.assert_called_once_with("0SHV,1")
+            mock.assert_called_once_with("SHV,1")
 
     def test_send_and_verify_data(self):
         with patch.object(self.device, '_send_command', return_value="1.23E-3,0") as mock:
-            result = self.device._send_and_verify("RPV")
+            result = self.device._send_and_verify("RPV 1")
             self.assertEqual(result, "1.23E-3,0")
-            mock.assert_called_once_with("0RPV")
+            mock.assert_called_once_with("RPV 1")
 
     def test_send_and_verify_error_invalid(self):
         with patch.object(self.device, '_send_command', return_value="?\tI\tInvalid command"):
@@ -113,7 +113,7 @@ class TestVCUControllerSendAndVerify(unittest.TestCase):
     def test_send_and_verify_error_timeout(self):
         with patch.object(self.device, '_send_command', return_value="?\tK\tTimeout"):
             with self.assertRaises(VCUProtocolError) as ctx:
-                self.device._send_and_verify("RPV")
+                self.device._send_and_verify("RPV 1")
             self.assertIn("Communication timeout", str(ctx.exception))
 
 
@@ -166,9 +166,9 @@ class TestVCUControllerReadCommands(unittest.TestCase):
 
     def test_read_pressure_with_sensor_index(self):
         with patch.object(self.device, '_send_command', return_value="2.5E-4,0") as mock:
-            pressure, status = self.device.read_pressure(sensor_index=2)
+            pressure, status = self.device.read_pressure(channel=2)
             self.assertAlmostEqual(pressure, 2.5e-4)
-            mock.assert_called_once_with("0RPV,2")
+            mock.assert_called_once_with("RPV 2")
 
     def test_read_sensor_id_ptr(self):
         with patch.object(self.device, '_send_command', return_value="1"):

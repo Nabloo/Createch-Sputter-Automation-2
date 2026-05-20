@@ -5,6 +5,7 @@ sensor identification, and setpoint status.
 
 Protocol summary (from manual):
   - RS232 or RS485, 8N1, 9600/19200/38400 baud
+  - adress is only needed for RS485
   - ASCII strings, comma delimited, CR terminated (0x0D)
   - Read:  [Address] Command <CR>  ->  Response <CR>
   - Error: ? <TAB> X <TAB> [...]  (X = I/P/C/S/K)
@@ -73,7 +74,8 @@ class VCUController(BaseDevice):
     """Driver for the JEVAmet VCU vacuum pressure controller.
 
     Configuration keys (besides BaseDevice serial params):
-        address (int): RS485 address (0-126). Default 0 (display).
+        address (int): Optional device ID for display purposes, not sent
+                       in commands (RS232 mode). Default 0.
         unit (str): Pressure unit string for display. Default "mbar".
     """
 
@@ -122,7 +124,13 @@ class VCUController(BaseDevice):
             self._firmware_version = None
 
     def _build_command(self, command: str, *params: str) -> str:
-        cmd = f"{self._address}{command}"
+        """Build a command string. Address is omitted (RS232).
+
+        For write commands, params are comma-separated (e.g. 'SHV,1').
+        For read commands with channel (RPV, RID), pass the
+        space-formatted command directly with no params.
+        """
+        cmd = command
         if params:
             cmd += "," + ",".join(params)
         return cmd
@@ -142,21 +150,15 @@ class VCUController(BaseDevice):
             raise VCUProtocolError(f"{self.device_id}: {msg}")
         raise VCUProtocolError(f"{self.device_id}: {response.strip()}")
 
-    def read_pressure(self, sensor_index: int = 0) -> Tuple[float, int]:
-        if sensor_index > 0:
-            resp = self._send_and_verify("RPV", str(sensor_index))
-        else:
-            resp = self._send_and_verify("RPV")
+    def read_pressure(self, channel: int = 1) -> Tuple[float, int]:
+        resp = self._send_and_verify(f"RPV {channel}")
         parts = resp.split(",")
         pressure = float(parts[0])
         status_code = int(parts[1]) if len(parts) > 1 else 0
         return pressure, status_code
 
-    def read_sensor_id(self, sensor_index: int = 0) -> int:
-        if sensor_index > 0:
-            resp = self._send_and_verify("RID", str(sensor_index))
-        else:
-            resp = self._send_and_verify("RID")
+    def read_sensor_id(self, channel: int = 1) -> int:
+        resp = self._send_and_verify(f"RID {channel}")
         return int(resp.strip())
 
     def read_firmware(self) -> str:
