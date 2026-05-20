@@ -77,15 +77,15 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
         self.assertIn(result["status_code"], STATUS_TEXTS)
 
     def test_all_three_sensors_read_pressure(self):
-        """All 3 connected sensors should return valid pressure with a known status."""
-        for idx in range(3):
-            with self.subTest(sensor_index=idx):
-                pressure, status_code = self.device.read_pressure(sensor_index=idx)
+        """All 3 connected sensors (channels 1-3) should return valid pressure with a known status."""
+        for channel in range(1, 4):
+            with self.subTest(channel=channel):
+                pressure, status_code = self.device.read_pressure(channel=channel)
                 self.assertIsInstance(pressure, float,
-                    "Sensor %d: pressure is not a float" % idx)
+                    "Channel %d: pressure is not a float" % channel)
                 self.assertIn(
                     status_code, STATUS_TEXTS,
-                    "Sensor %d: unknown status code %d" % (idx, status_code)
+                    "Channel %d: unknown status code %d" % (channel, status_code)
                 )
 
     def test_read_sensor_id_standalone(self):
@@ -95,14 +95,14 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
         self.assertNotEqual(sid, 0, "Sensor ID is 0 (No sensor) — expected a real sensor")
 
     def test_all_three_sensors_read_sensor_id(self):
-        """All 3 connected sensors should return a valid sensor ID."""
-        for idx in range(3):
-            with self.subTest(sensor_index=idx):
-                sid = self.device.read_sensor_id(sensor_index=idx)
+        """All 3 connected sensors (channels 1-3) should return a valid sensor ID."""
+        for channel in range(1, 4):
+            with self.subTest(channel=channel):
+                sid = self.device.read_sensor_id(channel=channel)
                 self.assertIsInstance(sid, int,
-                    "Sensor %d: sensor ID is not an int" % idx)
+                    "Channel %d: sensor ID is not an int" % channel)
                 self.assertIn(sid, SENSOR_NAMES,
-                    "Sensor %d: unknown sensor ID %d" % (idx, sid))
+                    "Channel %d: unknown sensor ID %d" % (channel, sid))
 
     def test_read_firmware_standalone(self):
         """RVN command should return a non-empty version string."""
@@ -142,9 +142,9 @@ class TestVCUHardwareErrorHandling(unittest.TestCase):
             self.device._send_and_verify("XYZ")
 
     def test_invalid_parameter_raises_error(self):
-        """An out-of-range parameter value should raise VCUProtocolError."""
+        """An out-of-range channel should raise VCUProtocolError."""
         with self.assertRaises(VCUProtocolError):
-            self.device._send_and_verify("RPV", "99")
+            self.device._send_and_verify("RPV 99")
 
 
 if __name__ == "__main__":
