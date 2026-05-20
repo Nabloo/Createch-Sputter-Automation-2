@@ -254,7 +254,7 @@ class TestVCUControllerConnectLifecycle(unittest.TestCase):
             self.assertEqual(self.device.firmware_version, "VCU-3.0")
 
     def test_after_connect_sensor_failure(self):
-        with patch.object(self.device, '_send_command', side_effect=RuntimeError("Timeout")):
+        with patch.object(self.device, '_send_command', side_effect=TimeoutError("Timeout")):
             self.device._after_connect()
             self.assertIsNone(self.device._sensor_id)
             self.assertEqual(self.device.sensor_name, "Unknown")

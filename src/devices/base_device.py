@@ -30,7 +30,7 @@ class BaseDevice(ABC):
     def __init__(self, config: Dict[str, Any]) -> None:
         self._config = config
         self._serial: Optional[serial.Serial] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # reentrant: _after_connect may call _send_command
         self._connected = False
         self._running = False
         self._reconnect_thread: Optional[threading.Thread] = None
@@ -129,9 +129,11 @@ class BaseDevice(ABC):
         )
         self._reconnect_thread.start()
 
-    def stop_reconnect_loop(self) -> None:
-        """Stop background reconnection thread."""
+    def stop_reconnect_loop(self, join_timeout: float = 3.0) -> None:
+        """Stop background reconnection thread and wait for it to finish."""
         self._running = False
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            self._reconnect_thread.join(timeout=join_timeout)
 
     @abstractmethod
     def poll(self) -> Dict[str, Any]:

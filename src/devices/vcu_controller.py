@@ -13,6 +13,8 @@ Protocol summary (from manual):
 import logging
 from typing import Any, Dict, Optional, Tuple
 
+import serial
+
 from src.devices.base_device import BaseDevice
 
 logger = logging.getLogger(__name__)
@@ -109,13 +111,13 @@ class VCUController(BaseDevice):
                 self._sensor_id,
                 SENSOR_NAMES.get(self._sensor_id, "Unknown"),
             )
-        except Exception:
+        except (VCUProtocolError, TimeoutError, ConnectionError, OSError, serial.SerialException):
             logger.warning("%s: could not read sensor ID", self.device_id)
             self._sensor_id = None
         try:
             self._firmware_version = self.read_firmware()
             logger.info("%s: firmware = %s", self.device_id, self._firmware_version)
-        except Exception:
+        except (VCUProtocolError, TimeoutError, ConnectionError, OSError, serial.SerialException):
             logger.warning("%s: could not read firmware version", self.device_id)
             self._firmware_version = None
 
@@ -150,8 +152,11 @@ class VCUController(BaseDevice):
         status_code = int(parts[1]) if len(parts) > 1 else 0
         return pressure, status_code
 
-    def read_sensor_id(self) -> int:
-        resp = self._send_and_verify("RID")
+    def read_sensor_id(self, sensor_index: int = 0) -> int:
+        if sensor_index > 0:
+            resp = self._send_and_verify("RID", str(sensor_index))
+        else:
+            resp = self._send_and_verify("RID")
         return int(resp.strip())
 
     def read_firmware(self) -> str:

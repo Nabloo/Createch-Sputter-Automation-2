@@ -82,6 +82,7 @@ GUI must never directly communicate with serial ports.
 - Graceful disconnect/reconnect handling
 - Automatic reconnect attempts
 - Per-device configurable polling intervals
+- RS232 protocol is used for the VCU
 
 ### Architecture
 - One device class per physical device
@@ -371,6 +372,7 @@ Implement:
 * timeout handling,
 * reconnect handling,
 * command parsing.
+* only implement read functions, don't implement write functions.
 
 ### Files
 
