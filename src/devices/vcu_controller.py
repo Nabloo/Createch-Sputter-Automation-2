@@ -95,11 +95,11 @@ class VCUController(BaseDevice):
     def channels(self) -> list[str]:
         return ["pressure", "status_code", "status_text"]
 
-    def poll(self) -> list[Dict[str, Any]]:
+    def poll(self) -> Dict[Dict[str, Any]]:
         """
-        returns array with a dict for each sensor
+        returns dict with the channel number as key. For each sensor there is a dict with the pressure, status_code, status text, and unit.
         """
-        data = []
+        data = {}
         for channel in range(1, self._number_of_pressure_sensors + 1):
             pressure, status_code = self.read_pressure(channel)
             channel_data = {
@@ -110,7 +110,7 @@ class VCUController(BaseDevice):
                 ),
                 "unit": self._pressure_unit,
             }
-            data.append(channel_data)
+            data[f"channel_{channel}"] = channel_data
         return data
 
     def _after_connect(self) -> None:
