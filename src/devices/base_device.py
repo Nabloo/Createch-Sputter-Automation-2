@@ -165,7 +165,6 @@ class BaseDevice(ABC):
     def _send_command(self, command: str) -> str:
         """Send ASCII command + CR and return response line."""
         with self._lock:
-            print(command)
             self._write(command.encode("ascii") + b"\r")
             response = self._readline().decode("ascii").strip()
         return response

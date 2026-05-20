@@ -28,14 +28,12 @@ def create_device() -> VCUController:
         "port": VCU_PORT,
         "baudrate": VCU_BAUDRATE,
         "address": VCU_ADDRESS,
-        "unit": "mbar",
         "timeout": 2.0,
     })
 
 
 class TestVCUHardwareReadOnly(unittest.TestCase):
     """Read-only hardware tests — safe to run anytime."""
-
     @classmethod
     def setUpClass(cls):
         cls.device = create_device()

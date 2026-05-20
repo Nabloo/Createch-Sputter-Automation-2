@@ -15,7 +15,6 @@ class TestVCUControllerProperties(unittest.TestCase):
             "port": "COM6",
             "baudrate": 9600,
             "address": 0,
-            "unit": "mbar",
             "timeout": 1.0,
         }
         self.device = VCUController(self.config)
