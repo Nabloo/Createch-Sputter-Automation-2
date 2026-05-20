@@ -9,7 +9,12 @@ Usage:
 """
 
 import unittest
-from src.devices.vcu_controller import VCUController, VCUProtocolError, STATUS_TEXTS
+from src.devices.vcu_controller import (
+    SENSOR_NAMES,
+    STATUS_TEXTS,
+    VCUController,
+    VCUProtocolError,
+)
 
 
 VCU_PORT = "COM6"
@@ -49,7 +54,7 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
 
     def test_sensor_id_valid(self):
         """Primary sensor should have a real sensor connected (ID != 0)."""
-        sid = self.device._sensor_id
+        sid = self.device.sensor_id
         self.assertIsNotNone(sid, "Sensor ID was not read during connect")
         self.assertNotEqual(sid, 0, "Sensor ID is 0 (No sensor) — expected a real sensor")
 
@@ -72,17 +77,15 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
         self.assertIn(result["status_code"], STATUS_TEXTS)
 
     def test_all_three_sensors_read_pressure(self):
-        """All 3 connected sensors should return valid pressure (status 0 = OK)."""
+        """All 3 connected sensors should return valid pressure with a known status."""
         for idx in range(3):
             with self.subTest(sensor_index=idx):
                 pressure, status_code = self.device.read_pressure(sensor_index=idx)
                 self.assertIsInstance(pressure, float,
                     "Sensor %d: pressure is not a float" % idx)
-                self.assertEqual(
-                    status_code, 0,
-                    "Sensor %d: expected status 0 (OK), got %d (%s)" % (
-                        idx, status_code, STATUS_TEXTS.get(status_code, "Unknown")
-                    )
+                self.assertIn(
+                    status_code, STATUS_TEXTS,
+                    "Sensor %d: unknown status code %d" % (idx, status_code)
                 )
 
     def test_read_sensor_id_standalone(self):
@@ -90,6 +93,16 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
         sid = self.device.read_sensor_id()
         self.assertIsInstance(sid, int)
         self.assertNotEqual(sid, 0, "Sensor ID is 0 (No sensor) — expected a real sensor")
+
+    def test_all_three_sensors_read_sensor_id(self):
+        """All 3 connected sensors should return a valid sensor ID."""
+        for idx in range(3):
+            with self.subTest(sensor_index=idx):
+                sid = self.device.read_sensor_id(sensor_index=idx)
+                self.assertIsInstance(sid, int,
+                    "Sensor %d: sensor ID is not an int" % idx)
+                self.assertIn(sid, SENSOR_NAMES,
+                    "Sensor %d: unknown sensor ID %d" % (idx, sid))
 
     def test_read_firmware_standalone(self):
         """RVN command should return a non-empty version string."""

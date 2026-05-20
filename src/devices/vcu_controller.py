@@ -176,6 +176,11 @@ class VCUController(BaseDevice):
         return result
 
     @property
+    def sensor_id(self) -> Optional[int]:
+        """Cached sensor ID read during (re)connect, or None if unavailable."""
+        return self._sensor_id
+
+    @property
     def sensor_name(self) -> str:
         if self._sensor_id is not None:
             return SENSOR_NAMES.get(self._sensor_id, f"Unknown ({self._sensor_id})")
