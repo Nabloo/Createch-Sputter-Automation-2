@@ -25,7 +25,7 @@ except ImportError:
     list_ports = None  # type: ignore[assignment]
 
 from src.acquisition.engine import AcquisitionEngine
-from src.config import get_device_configs, get_plot_configs, get_device_panel_configs
+from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config
 from src.data.datastore import DataStore
 from src.devices.base_device import BaseDevice
 from src.devices.vcu_controller import VCUController
@@ -296,6 +296,13 @@ class DeviceManager:
             colours = pc.get("colours")
             history = pc.get("history_seconds", 60.0)
             area = _AREA_MAP.get(pc.get("area", "right"), Qt.RightDockWidgetArea)
+
+            # Auto-derive channels from device config if not explicitly set
+            if not channels:
+                dev_cfg = find_device_config(self._config, device_id)
+                if dev_cfg:
+                    num_sensors = dev_cfg.get("number of pressure sensors", 1)
+                    channels = [f"ch{i}_pressure" for i in range(1, num_sensors + 1)]
 
             plot = PlotWidget(
                 device_id=device_id,

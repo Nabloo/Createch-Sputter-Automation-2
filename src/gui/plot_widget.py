@@ -53,6 +53,8 @@ class PlotWidget(QWidget):
         self._channels: Dict[str, Dict[str, Any]] = {}
         self._buffers: Dict[str, deque] = {}
         self._curves: Dict[str, pg.PlotDataItem] = {}
+        self._t0: Optional[float] = None
+        self._y_label_set: bool = False
 
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
@@ -66,7 +68,7 @@ class PlotWidget(QWidget):
         self._plot.setBackground("#1e1e1e")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         self._plot.setLabel("left", "Value")
-        self._plot.setLabel("bottom", "Time")
+        self._plot.setLabel("bottom", "Time (s)")
         self._plot.addLegend(offset=(-10, 10))
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
@@ -155,6 +157,8 @@ class PlotWidget(QWidget):
 
     def clear(self) -> None:
         """Clear all plot data."""
+        self._t0 = None
+        self._y_label_set = False
         for buf in self._buffers.values():
             buf.clear()
         for curve in self._curves.values():
@@ -193,7 +197,15 @@ class PlotWidget(QWidget):
         self, device_id: str, ts_float: float, data: Dict[str, Any]
     ) -> None:
         """Slot: runs in GUI thread.  Append data and update curves."""
+        # Track first timestamp for relative x-axis
+        if self._t0 is None:
+            self._t0 = ts_float
+        t_rel = ts_float - self._t0
+
         flat = self._extract_values(data)
+
+        # Auto-detect unit from VCU-style data and set y-axis label once
+        self._auto_detect_unit(data)
 
         for channel_name, cfg in self._channels.items():
             if not cfg.get("visible", True):
@@ -203,7 +215,7 @@ class PlotWidget(QWidget):
                 continue
             if channel_name not in self._buffers:
                 self._buffers[channel_name] = deque()
-            self._buffers[channel_name].append((ts_float, value))
+            self._buffers[channel_name].append((t_rel, value))
 
         self._trim_buffers()
         for channel_name in self._channels:
@@ -288,9 +300,22 @@ rement dict.
         curve.setData(list(xs), list(ys))
 
     def _trim_buffers(self) -> None:
-        if self._history_seconds <= 0:
+        if self._history_seconds <= 0 or self._t0 is None:
             return
-        cutoff = time.time() - self._history_seconds
+        cutoff = time.time() - self._t0 - self._history_seconds
         for buf in self._buffers.values():
             while buf and buf[0][0] < cutoff:
                 buf.popleft()
+
+    def _auto_detect_unit(self, data: Dict[str, Any]) -> None:
+        """Set y-axis label from the unit field in VCU-style data."""
+        if self._y_label_set:
+            return
+        if not (data and all(isinstance(v, dict) for v in data.values())):
+            return
+        for ch_data in data.values():
+            unit = ch_data.get("unit", "")
+            if unit:
+                self._plot.setLabel("left", f"Pressure ({unit})")
+                self._y_label_set = True
+                return

@@ -134,8 +134,22 @@ class DevicePanel(QWidget):
         layout.addWidget(sep)
 
         # ---- Live values ----
-        values_group = QGroupBox("Live Values")
-        values_layout = QVBoxLayout(values_group)
+        values_header = QHBoxLayout()
+        values_header.setSpacing(8)
+        values_title = QLabel("Live Values")
+        values_title.setStyleSheet("font-weight: bold; color: #dcdcde;")
+        values_header.addWidget(values_title)
+        self._unit_label = QLabel("")
+        self._unit_label.setStyleSheet("color: #888; font-size: 12px;")
+        values_header.addWidget(self._unit_label)
+        values_header.addStretch()
+
+        values_group = QGroupBox()
+        values_group.setLayout(QVBoxLayout())
+        values_group.layout().setContentsMargins(0, 4, 0, 0)
+        values_group.layout().addLayout(values_header)
+
+        values_layout = QVBoxLayout()
         values_layout.setSpacing(8)
 
         for ch in range(1, self._num_channels + 1):
@@ -154,11 +168,9 @@ class DevicePanel(QWidget):
             ch_form.addRow("Status:", status_label)
             self._value_labels[f"ch{ch}_status"] = status_label
 
-            unit_label = QLabel("--")
-            ch_form.addRow("Unit:", unit_label)
-            self._value_labels[f"ch{ch}_unit"] = unit_label
-
             values_layout.addWidget(ch_box)
+
+        values_group.layout().addLayout(values_layout)
 
         layout.addWidget(values_group)
 
@@ -294,9 +306,8 @@ class DevicePanel(QWidget):
                     lbl.setStyleSheet(f"color: {colour};")
 
                 unit = ch_data.get("unit", "")
-                lbl = self._value_labels.get(f"ch{ch_key}_unit")
-                if lbl:
-                    lbl.setText(unit)
+                if unit and self._unit_label.text() != unit:
+                    self._unit_label.setText(unit)
             return
 
         for key, value in data.items():

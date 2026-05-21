@@ -39,11 +39,13 @@
         "area": "right",
         "channels": [
           "ch1_pressure",
-          "ch2_pressure"
+          "ch2_pressure",
+          "ch3_pressure"
         ],
         "colours": [
           "#00bfff",
-          "#ff6b6b"
+          "#ff6b6b",
+          "#51cf66"
         ],
         "history_seconds": 60.0
       }
