@@ -11,7 +11,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
-    QLabel,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -44,6 +43,7 @@ class PlotWidget(QWidget):
 
     _data_arrived = Signal(str, float, object)
     remove_requested = Signal()
+    state_changed = Signal()  # emitted when device, channels, visibility etc. change
 
     def __init__(
         self,
@@ -76,9 +76,48 @@ class PlotWidget(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(2)
 
+        # ---- Toolbar at the top ----
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(2, 2, 2, 2)
+        toolbar.setSpacing(4)
+
+        # Device selector dropdown
+        self._device_combo = QComboBox()
+        self._device_combo.setMinimumWidth(80)
+        self._device_combo.setToolTip("Select device to display")
+        self._device_combo.currentTextChanged.connect(self._on_device_changed)
+        toolbar.addWidget(self._device_combo)
+
+        self._configure_btn = QPushButton("Channels")
+        self._configure_btn.setToolTip("Configure visible channels and appearance")
+        self._configure_btn.clicked.connect(self._on_configure)
+        toolbar.addWidget(self._configure_btn)
+
+        self._clear_btn = QPushButton("Clear")
+        self._clear_btn.setToolTip("Clear all plot data")
+        self._clear_btn.clicked.connect(self.clear)
+        toolbar.addWidget(self._clear_btn)
+
+        self._auto_btn = QPushButton("Auto")
+        self._auto_btn.setToolTip("Reset auto-scaling")
+        toolbar.addWidget(self._auto_btn)
+
+        toolbar.addStretch()
+
+        self._close_btn = QPushButton("\u00d7")
+        self._close_btn.setToolTip("Remove this plot")
+        self._close_btn.setFixedSize(24, 24)
+        self._close_btn.clicked.connect(self.remove_requested.emit)
+        toolbar.addWidget(self._close_btn)
+
+        layout.addLayout(toolbar)
+
+        # ---- Plot (fills remaining space) ----
         self._plot = pg.PlotWidget()
+        # Wire the auto button now that _plot exists
+        self._auto_btn.clicked.connect(self._plot.enableAutoRange)
         self._plot.setBackground("#1e1e1e")
         self._plot.showGrid(x=True, y=True, alpha=0.3)
         self._plot.setLabel("left", "Value")
@@ -93,47 +132,6 @@ class PlotWidget(QWidget):
             axis.setTextPen(axis_pen)
 
         layout.addWidget(self._plot, stretch=1)
-
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
-
-        # Device selector dropdown
-        dev_label = QLabel("Device:")
-        dev_label.setStyleSheet("color: #aaa;")
-        toolbar.addWidget(dev_label)
-
-        self._device_combo = QComboBox()
-        self._device_combo.setMinimumWidth(80)
-        self._device_combo.setToolTip("Select device to display")
-        self._device_combo.currentTextChanged.connect(self._on_device_changed)
-        toolbar.addWidget(self._device_combo)
-
-        toolbar.addSpacing(8)
-
-        self._configure_btn = QPushButton("Channels")
-        self._configure_btn.setToolTip("Configure visible channels and appearance")
-        self._configure_btn.clicked.connect(self._on_configure)
-        toolbar.addWidget(self._configure_btn)
-
-        self._clear_btn = QPushButton("Clear")
-        self._clear_btn.setToolTip("Clear all plot data")
-        self._clear_btn.clicked.connect(self.clear)
-        toolbar.addWidget(self._clear_btn)
-
-        self._auto_btn = QPushButton("Auto")
-        self._auto_btn.setToolTip("Reset auto-scaling")
-        self._auto_btn.clicked.connect(self._plot.enableAutoRange)
-        toolbar.addWidget(self._auto_btn)
-
-        toolbar.addStretch()
-
-        self._close_btn = QPushButton("\u00d7")
-        self._close_btn.setToolTip("Remove this plot")
-        self._close_btn.setFixedSize(24, 24)
-        self._close_btn.clicked.connect(self.remove_requested.emit)
-        toolbar.addWidget(self._close_btn)
-
-        layout.addLayout(toolbar)
 
     # ------------------------------------------------------------------
     # Public API
@@ -249,7 +247,26 @@ class PlotWidget(QWidget):
 
     @property
     def channels(self) -> List[str]:
+        """Currently configured channel names (all, not just visible)."""
         return list(self._channels.keys())
+
+    @property
+    def visible_channels(self) -> List[str]:
+        """Only channels whose visibility checkbox is checked."""
+        return [
+            name for name, cfg in self._channels.items()
+            if cfg.get("visible", True)
+        ]
+
+    @property
+    def channel_colours(self) -> List[str]:
+        """Colours for all configured channels, in channel order."""
+        return [cfg["colour"] for cfg in self._channels.values()]
+
+    @property
+    def channel_visibility(self) -> Dict[str, bool]:
+        """Visibility map for all configured channels."""
+        return {name: cfg.get("visible", True) for name, cfg in self._channels.items()}
 
     @property
     def history_seconds(self) -> float:
@@ -267,7 +284,9 @@ class PlotWidget(QWidget):
     def _on_data_arrived(
         self, device_id: str, ts_float: float, data: Dict[str, Any]
     ) -> None:
-        """Slot: runs in GUI thread.  Append data and update visible curves only."""
+        """Slot: runs in GUI thread.  Buffer data for ALL channels (even hidden),
+        but only render visible curves.  This way re-enabling a channel shows
+        its full history."""
         if self._t0 is None:
             self._t0 = ts_float
         t_rel = ts_float - self._t0
@@ -275,9 +294,9 @@ class PlotWidget(QWidget):
         flat = self._extract_values(data)
         self._auto_detect_unit(data)
 
-        for channel_name, cfg in self._channels.items():
-            if not cfg.get("visible", True):
-                continue
+        # Always buffer data for every known channel so historical data
+        # is available when the user re-enables a hidden channel.
+        for channel_name in self._channels:
             value = flat.get(channel_name)
             if value is None:
                 continue
@@ -286,10 +305,10 @@ class PlotWidget(QWidget):
             self._buffers[channel_name].append((t_rel, value))
 
         self._trim_buffers()
+        # Only update the rendered curve for visible channels.
         for channel_name, cfg in self._channels.items():
-            if not cfg.get("visible", True):
-                continue
-            self._update_curve(channel_name)
+            if cfg.get("visible", True):
+                self._update_curve(channel_name)
 
     def _on_configure(self) -> None:
         """Open the channel configuration dialog."""
@@ -319,7 +338,8 @@ class PlotWidget(QWidget):
                         )
 
             # Hide/show curves based on new visibility.
-            # Clear hidden channel buffers so old data never reappears.
+            # Hidden curves get cleared from the screen but the buffer
+            # is preserved so re-enabling shows all historical data.
             for name, cfg in self._channels.items():
                 curve = self._curves.get(name)
                 if curve is None:
@@ -328,14 +348,12 @@ class PlotWidget(QWidget):
                     self._update_curve(name)
                 else:
                     curve.setData([], [])
-                    buf = self._buffers.get(name)
-                    if buf is not None:
-                        buf.clear()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+            self.state_changed.emit()
 
     def _on_device_changed(self, new_device: str) -> None:
         """Handle device dropdown change -- clear data for the switch."""
-        if not new_device:
+        if not new_device or new_device == self._selected_device:
             return
         self._device_id = new_device
         self._selected_device = new_device
@@ -346,6 +364,7 @@ class PlotWidget(QWidget):
             curve.setData([], [])
         self._plot.setLabel("left", "Value")
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        self.state_changed.emit()
         logger.debug("PlotWidget: switched to device %r", new_device)
 
     # ------------------------------------------------------------------

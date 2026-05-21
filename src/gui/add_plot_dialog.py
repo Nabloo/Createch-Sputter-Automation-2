@@ -1,4 +1,4 @@
-"""Dialog for configuring a new plot -- channels and title only."""
+"""Dialog for configuring a new plot -- channels only (device is chosen on the plot itself)."""
 
 import logging
 from typing import List, Optional
@@ -7,9 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QGroupBox,
-    QLineEdit,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -21,44 +19,30 @@ logger = logging.getLogger(__name__)
 class AddPlotDialog(QDialog):
     """Dialog to configure a new plot widget.
 
-    The user picks which channels to display and optionally customises
-    the title.  Device selection happens via the plot's own dropdown.
+    The user picks which channels to display.  Device selection
+    happens via the plot's own dropdown.
     """
 
     def __init__(
         self,
         channels: List[str],
-        default_title: str = "",
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Add Plot")
-        self.setMinimumWidth(350)
+        self.setMinimumWidth(300)
 
         self._channel_names = list(channels)
         self._channel_checkboxes: List[QCheckBox] = []
 
-        self._build_ui(default_title)
+        self._build_ui()
 
     @property
     def selected_channels(self) -> List[str]:
         return [cb.text() for cb in self._channel_checkboxes if cb.isChecked()]
 
-    @property
-    def plot_title(self) -> str:
-        t = self._title_edit.text().strip()
-        return t or "Plot"
-
-    def _build_ui(self, default_title: str) -> None:
+    def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-
-        title_group = QGroupBox("Title")
-        title_layout = QFormLayout(title_group)
-
-        self._title_edit = QLineEdit()
-        self._title_edit.setPlaceholderText(default_title or "Plot")
-        title_layout.addRow("Plot title:", self._title_edit)
-        layout.addWidget(title_group)
 
         channels_group = QGroupBox("Channels")
         channels_layout = QVBoxLayout(channels_group)

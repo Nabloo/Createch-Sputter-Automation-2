@@ -26,7 +26,7 @@ except ImportError:
     list_ports = None  # type: ignore[assignment]
 
 from src.acquisition.engine import AcquisitionEngine
-from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config, upsert_plot_config
+from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config, save_config, set_plot_configs
 from src.data.datastore import DataStore
 from src.devices.base_device import BaseDevice
 from src.devices.vcu_controller import VCUController
@@ -296,7 +296,6 @@ class DeviceManager:
         for pc in get_plot_configs(self._config):
             device_id = pc.get("device_id", "")
             dock_id = pc.get("dock_id", f"plot_{device_id}")
-            title = pc.get("title", f"{device_id} Plot")
             channels = pc.get("channels", [])
             colours = pc.get("colours")
             history = pc.get("history_seconds", 60.0)
@@ -320,8 +319,10 @@ class DeviceManager:
 
             # Wire remove button
             plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
+            # Persist state changes (device switch, channel config, etc.)
+            plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
 
-            self._window.dock_manager.add_panel(dock_id, title, plot, area=area)
+            self._window.dock_manager.add_panel(dock_id, "", plot, area=area)
             self._store.subscribe(plot.push_data)
             self._plots[dock_id] = plot
             logger.debug("PlotWidget created for %s (dock %s)", device_id, dock_id)
@@ -334,7 +335,7 @@ class DeviceManager:
         """Open a dialog to add a new plot widget.
 
         Device selection happens via the plot's own dropdown.
-        The dialog only asks for channels and title.
+        The dialog only asks which channels to display.
         """
         device_ids = list(self._devices.keys())
         if not device_ids:
@@ -354,18 +355,15 @@ class DeviceManager:
 
         # Default to the first device
         default_device = device_ids[0]
-        default_title = f"{default_device} Plot"
 
         dlg = AddPlotDialog(
             channels=all_channels,
-            default_title=default_title,
             parent=self._window,
         )
         if not dlg.exec():
             return
 
         channels = dlg.selected_channels
-        title = dlg.plot_title
         dock_id = f"plot_{len(self._plots)}"
 
         if not channels:
@@ -380,18 +378,20 @@ class DeviceManager:
         plot.set_channels(channels)
 
         self._window.dock_manager.add_panel(
-            dock_id, title, plot, area=Qt.RightDockWidgetArea,
+            dock_id, "", plot, area=Qt.RightDockWidgetArea,
         )
         self._store.subscribe(plot.push_data)
         self._plots[dock_id] = plot
 
         # Wire remove button
         plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
+        # Persist state changes
+        plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
 
         self._balance_plot_docks()
 
-        # Persist the new plot config
-        upsert_plot_config(self._config, default_device, dock_id, title, channels)
+        # Persist the new plot config immediately
+        self._persist_plots()
 
         logger.info("Added plot %r for %s: %s", dock_id, default_device, channels)
 
@@ -403,7 +403,45 @@ class DeviceManager:
         self._store.unsubscribe(plot.push_data)
         self._window.dock_manager.remove_panel(dock_id)
         self._balance_plot_docks()
+        self._persist_plots()
         logger.info("Removed plot %r", dock_id)
+
+    def _on_plot_state_changed(self, dock_id: str) -> None:
+        """Called when a plot's device, channels, or visibility changes."""
+        self._persist_plots()
+
+    def _persist_plots(self) -> None:
+        """Save all current plot configurations to config.json.
+
+        Only visible channels are saved; hidden channels are omitted so they
+        don't reappear on next launch.
+        """
+        plots_data: List[Dict[str, Any]] = []
+        for dock_id, plot in self._plots.items():
+            dock = self._window.dock_manager.panel(dock_id)
+            area = "right"
+            if dock is not None:
+                wa = self._window.dockWidgetArea(dock)
+                for name, val in _AREA_MAP.items():
+                    if val == wa:
+                        area = name
+                        break
+            visible = plot.visible_channels
+            colours = [
+                c for ch, c in zip(plot.channels, plot.channel_colours)
+                if ch in visible
+            ]
+            plots_data.append({
+                "dock_id": dock_id,
+                "device_id": plot.device_id,
+                "area": area,
+                "channels": visible,
+                "colours": colours,
+                "history_seconds": plot.history_seconds,
+            })
+        set_plot_configs(self._config, plots_data)
+        save_config(self._config)
+        logger.debug("Plot configurations persisted (%d plots)", len(plots_data))
 
     def _balance_plot_docks(self) -> None:
         """Distribute available space equally among plot docks."""
