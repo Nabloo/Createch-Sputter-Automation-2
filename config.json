@@ -33,9 +33,8 @@
     },
     "plots": [
       {
-        "device_id": "VCU-0",
         "dock_id": "plot_VCU-0",
-        "title": "VCU-0 Pressure",
+        "device_id": "VCU-0",
         "area": "right",
         "channels": [
           "ch1_pressure",
@@ -47,6 +46,53 @@
           "#ff6b6b",
           "#51cf66"
         ],
+        "visibility": {
+          "ch1_pressure": true,
+          "ch2_pressure": true,
+          "ch3_pressure": true
+        },
+        "history_seconds": 60.0
+      },
+      {
+        "dock_id": "plot_1",
+        "device_id": "VCU-0",
+        "area": "right",
+        "channels": [
+          "ch1_pressure",
+          "ch2_pressure",
+          "ch3_pressure"
+        ],
+        "colours": [
+          "#00bfff",
+          "#ff6b6b",
+          "#51cf66"
+        ],
+        "visibility": {
+          "ch1_pressure": true,
+          "ch2_pressure": true,
+          "ch3_pressure": true
+        },
+        "history_seconds": 60.0
+      },
+      {
+        "dock_id": "plot_2",
+        "device_id": "VCU-0",
+        "area": "right",
+        "channels": [
+          "ch1_pressure",
+          "ch2_pressure",
+          "ch3_pressure"
+        ],
+        "colours": [
+          "#00bfff",
+          "#ff6b6b",
+          "#51cf66"
+        ],
+        "visibility": {
+          "ch1_pressure": true,
+          "ch2_pressure": true,
+          "ch3_pressure": true
+        },
         "history_seconds": 60.0
       }
     ],

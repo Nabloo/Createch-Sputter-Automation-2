@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenuBar,
     QMessageBox,
+    QSizePolicy,
     QStatusBar,
     QToolBar,
     QWidget,
@@ -52,11 +53,6 @@ class MainWindow(QMainWindow):
 
         # ---- Dock manager ----
         self.dock_manager = DockManager(self)
-
-        # ---- Central placeholder (zero-size — all space goes to docks) ----
-        central = QWidget()
-        central.setMinimumSize(0, 0)
-        self.setCentralWidget(central)
 
         # ---- UI components ----
         self._build_menu_bar()
