@@ -25,10 +25,11 @@ except ImportError:
     list_ports = None  # type: ignore[assignment]
 
 from src.acquisition.engine import AcquisitionEngine
-from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config
+from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config, upsert_plot_config
 from src.data.datastore import DataStore
 from src.devices.base_device import BaseDevice
 from src.devices.vcu_controller import VCUController
+from src.gui.add_plot_dialog import AddPlotDialog
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
 
@@ -316,6 +317,94 @@ class DeviceManager:
             self._plots[dock_id] = plot
             logger.debug("PlotWidget created for %s (dock %s)", device_id, dock_id)
 
+    # ------------------------------------------------------------------
+    # Dynamic plot management
+    # ------------------------------------------------------------------
+
+    def add_plot(self) -> None:
+        """Open a dialog to add a new plot widget for a chosen device."""
+        device_channels: Dict[str, List[str]] = {}
+        for device_id, dev in self._devices.items():
+            dev_cfg = find_device_config(self._config, device_id)
+            if dev_cfg:
+                num = dev_cfg.get("number of pressure sensors", 1)
+                device_channels[device_id] = [
+                    f"ch{i}_pressure" for i in range(1, num + 1)
+                ]
+            else:
+                device_channels[device_id] = []
+
+        dlg = AddPlotDialog(
+            device_ids=list(self._devices.keys()),
+            device_channels=device_channels,
+            parent=self._window,
+        )
+        if not dlg.exec():
+            return
+
+        device_id = dlg.selected_device_id
+        channels = dlg.selected_channels
+        title = dlg.plot_title
+        dock_id = f"plot_{device_id}_{len(self._plots)}"
+
+        # Don't create a plot with no channels selected
+        if not channels:
+            logger.warning("No channels selected for new plot; skipped")
+            return
+
+        plot = PlotWidget(device_id=device_id)
+        plot.set_channels(channels)
+
+        self._window.dock_manager.add_panel(
+            dock_id, title, plot, area=Qt.RightDockWidgetArea,
+        )
+        self._store.subscribe(plot.push_data)
+        self._plots[dock_id] = plot
+
+        # Wire remove button
+        plot.remove_requested.connect(lambda: self.remove_plot(dock_id))
+
+        self._balance_plot_docks()
+
+        # Persist the new plot config
+        upsert_plot_config(self._config, device_id, dock_id, title, channels)
+
+        logger.info("Added plot %r for %s: %s", dock_id, device_id, channels)
+
+    def remove_plot(self, dock_id: str) -> None:
+        """Remove a plot by its dock ID."""
+        plot = self._plots.pop(dock_id, None)
+        if plot is None:
+            return
+        self._store.unsubscribe(plot.push_data)
+        self._window.dock_manager.remove_panel(dock_id)
+        self._balance_plot_docks()
+        logger.info("Removed plot %r", dock_id)
+
+    def _balance_plot_docks(self) -> None:
+        """Distribute available space equally among plot docks."""
+        docks = [
+            self._window.dock_manager.panel(did)
+            for did in self._plots
+        ]
+        docks = [d for d in docks if d is not None]
+        if len(docks) < 2:
+            return
+        # Determine the main axis of the docks
+        first_area = self._window.dockWidgetArea(docks[0])
+        if first_area in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea):
+            # Vertical docks — share height
+            total = sum(d.height() for d in docks)
+            each = max(100, total // len(docks))
+            sizes = [each] * len(docks)
+            self._window.resizeDocks(docks, sizes, Qt.Vertical)
+        elif first_area in (Qt.TopDockWidgetArea, Qt.BottomDockWidgetArea):
+            # Horizontal docks — share width
+            total = sum(d.width() for d in docks)
+            each = max(200, total // len(docks))
+            sizes = [each] * len(docks)
+            self._window.resizeDocks(docks, sizes, Qt.Horizontal)
+
     def _wire_toolbar(self) -> None:
         """Enable and connect MainWindow toolbar actions."""
         w = self._window
@@ -323,11 +412,13 @@ class DeviceManager:
         w._stop_action.setEnabled(True)
         w._connect_action.setEnabled(True)
         w._disconnect_action.setEnabled(True)
+        w._add_plot_action.setEnabled(True)
 
         w._start_action.triggered.connect(self.start_all)
         w._stop_action.triggered.connect(self.stop_all)
         w._connect_action.triggered.connect(self.connect_all)
         w._disconnect_action.triggered.connect(self.disconnect_all)
+        w._add_plot_action.triggered.connect(self.add_plot)
 
     def _wire_status_timer(self) -> None:
         """Wire MainWindow's existing status refresh timer to our method."""

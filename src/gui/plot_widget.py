@@ -7,10 +7,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import pyqtgraph as pg
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -39,6 +40,7 @@ class PlotWidget(QWidget):
     """
 
     _data_arrived = Signal(str, float, object)
+    remove_requested = Signal()
 
     def __init__(
         self,
@@ -58,6 +60,7 @@ class PlotWidget(QWidget):
 
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -99,6 +102,13 @@ class PlotWidget(QWidget):
         toolbar.addWidget(self._auto_btn)
 
         toolbar.addStretch()
+
+        self._close_btn = QPushButton("\u00d7")
+        self._close_btn.setToolTip("Remove this plot")
+        self._close_btn.setFixedSize(24, 24)
+        self._close_btn.clicked.connect(self.remove_requested.emit)
+        toolbar.addWidget(self._close_btn)
+
         layout.addLayout(toolbar)
 
     def push_data(
@@ -247,6 +257,17 @@ class PlotWidget(QWidget):
                         self._curves[ch].setPen(
                             pg.mkPen(color=new_colour, width=2)
                         )
+
+            # Hide/show curves based on new visibility and re-range y-axis
+            for name, cfg in self._channels.items():
+                curve = self._curves.get(name)
+                if curve is None:
+                    continue
+                if cfg.get("visible", True):
+                    self._update_curve(name)
+                else:
+                    curve.setData([], [])
+            self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     @staticmethod
     def _extract_values(data: Dict[str, Any]) -> Dict[str, Any]:

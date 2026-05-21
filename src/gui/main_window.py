@@ -142,6 +142,13 @@ class MainWindow(QMainWindow):
         self._disconnect_action.setEnabled(False)
         self._toolbar.addAction(self._disconnect_action)
 
+        self._toolbar.addSeparator()
+
+        self._add_plot_action = QAction("\ud83d\udcca  Add Plot", self)
+        self._add_plot_action.setStatusTip("Add a new plot widget")
+        self._add_plot_action.setEnabled(False)
+        self._toolbar.addAction(self._add_plot_action)
+
     # ------------------------------------------------------------------
     # Status bar
     # ------------------------------------------------------------------
