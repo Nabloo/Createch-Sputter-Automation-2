@@ -53,9 +53,9 @@ class MainWindow(QMainWindow):
         # ---- Dock manager ----
         self.dock_manager = DockManager(self)
 
-        # ---- Central placeholder ----
+        # ---- Central placeholder (zero-size — all space goes to docks) ----
         central = QWidget()
-        central.setMinimumSize(200, 200)
+        central.setMinimumSize(0, 0)
         self.setCentralWidget(central)
 
         # ---- UI components ----

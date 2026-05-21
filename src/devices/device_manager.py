@@ -307,12 +307,16 @@ class DeviceManager:
         if panel_cfg:
             area = _AREA_MAP.get(panel_cfg.get("area", "left"), Qt.LeftDockWidgetArea)
         dock_id = panel_cfg.get("dock_id", f"device_{device.device_id}") if panel_cfg else f"device_{device.device_id}"
-        self._window.dock_manager.add_panel(
+        dock = self._window.dock_manager.add_panel(
             dock_id,
             device.device_id,
             panel,
             area=area,
         )
+        # Give the device dock a maximum width so it doesn't take up
+        # unnecessary horizontal space (Qt splits left/right areas
+        # equally by default, but the panel only needs ~300 px).
+        dock.setMaximumWidth(340)
         logger.debug("DevicePanel created for %s", device.device_id)
         return panel
 
@@ -522,6 +526,14 @@ class DeviceManager:
             plot_sizes = [each_plot] * len(plot_docks)
             sizes = device_sizes + plot_sizes
             self._window.resizeDocks(all_docks, sizes, Qt.Vertical)
+
+        # ---- Horizontal balancing: device docks capped, plots fill the rest ----
+        for d in device_docks:
+            d.setMinimumWidth(0)
+            d.setMaximumWidth(340)
+        for d in plot_docks:
+            d.setMinimumWidth(300)
+            d.setMaximumWidth(10000)
 
     def clear_all_plots(self) -> None:
         """Clear all plot data without removing the plot widgets."""
