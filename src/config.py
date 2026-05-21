@@ -5,7 +5,10 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-DEFAULT_CONFIG_PATH = "config.json"
+# Resolve to project root so config.json always lives there,
+# regardless of the working directory at launch time.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "config.json")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "devices": [],
