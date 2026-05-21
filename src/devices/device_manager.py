@@ -13,6 +13,7 @@ Responsibilities:
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt
@@ -71,6 +72,8 @@ class DeviceManager:
         self._panels: Dict[str, DevicePanel] = {}
         # plot dock_id → PlotWidget
         self._plots: Dict[str, PlotWidget] = {}
+        # Shared x-axis origin — set at init so startup + dynamic plots align
+        self._global_t0: Optional[float] = time.time()
 
         # Wire engine → data store
         self._engine.subscribe(self._store.on_update)
@@ -289,6 +292,7 @@ class DeviceManager:
 
     def _setup_plots(self) -> None:
         """Create PlotWidget instances from config and wire to DataStore."""
+        device_ids = list(self._devices.keys())
         for pc in get_plot_configs(self._config):
             device_id = pc.get("device_id", "")
             dock_id = pc.get("dock_id", f"plot_{device_id}")
@@ -308,9 +312,14 @@ class DeviceManager:
             plot = PlotWidget(
                 device_id=device_id,
                 history_seconds=history,
+                global_t0=self._global_t0,
             )
+            plot.set_available_devices(device_ids)
             if channels:
                 plot.set_channels(channels, colours)
+
+            # Wire remove button
+            plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
 
             self._window.dock_manager.add_panel(dock_id, title, plot, area=area)
             self._store.subscribe(plot.push_data)
@@ -322,37 +331,52 @@ class DeviceManager:
     # ------------------------------------------------------------------
 
     def add_plot(self) -> None:
-        """Open a dialog to add a new plot widget for a chosen device."""
-        device_channels: Dict[str, List[str]] = {}
-        for device_id, dev in self._devices.items():
+        """Open a dialog to add a new plot widget.
+
+        Device selection happens via the plot's own dropdown.
+        The dialog only asks for channels and title.
+        """
+        device_ids = list(self._devices.keys())
+        if not device_ids:
+            logger.warning("No devices available; cannot add plot")
+            return
+
+        # Collect all channel names across all devices
+        all_channels: List[str] = []
+        for device_id in device_ids:
             dev_cfg = find_device_config(self._config, device_id)
             if dev_cfg:
                 num = dev_cfg.get("number of pressure sensors", 1)
-                device_channels[device_id] = [
-                    f"ch{i}_pressure" for i in range(1, num + 1)
-                ]
-            else:
-                device_channels[device_id] = []
+                for i in range(1, num + 1):
+                    ch_name = f"ch{i}_pressure"
+                    if ch_name not in all_channels:
+                        all_channels.append(ch_name)
+
+        # Default to the first device
+        default_device = device_ids[0]
+        default_title = f"{default_device} Plot"
 
         dlg = AddPlotDialog(
-            device_ids=list(self._devices.keys()),
-            device_channels=device_channels,
+            channels=all_channels,
+            default_title=default_title,
             parent=self._window,
         )
         if not dlg.exec():
             return
 
-        device_id = dlg.selected_device_id
         channels = dlg.selected_channels
         title = dlg.plot_title
-        dock_id = f"plot_{device_id}_{len(self._plots)}"
+        dock_id = f"plot_{len(self._plots)}"
 
-        # Don't create a plot with no channels selected
         if not channels:
             logger.warning("No channels selected for new plot; skipped")
             return
 
-        plot = PlotWidget(device_id=device_id)
+        plot = PlotWidget(
+            device_id=default_device,
+            global_t0=self._global_t0,
+        )
+        plot.set_available_devices(device_ids)
         plot.set_channels(channels)
 
         self._window.dock_manager.add_panel(
@@ -362,14 +386,14 @@ class DeviceManager:
         self._plots[dock_id] = plot
 
         # Wire remove button
-        plot.remove_requested.connect(lambda: self.remove_plot(dock_id))
+        plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
 
         self._balance_plot_docks()
 
         # Persist the new plot config
-        upsert_plot_config(self._config, device_id, dock_id, title, channels)
+        upsert_plot_config(self._config, default_device, dock_id, title, channels)
 
-        logger.info("Added plot %r for %s: %s", dock_id, device_id, channels)
+        logger.info("Added plot %r for %s: %s", dock_id, default_device, channels)
 
     def remove_plot(self, dock_id: str) -> None:
         """Remove a plot by its dock ID."""

@@ -1,4 +1,4 @@
-"""Real-time pyqtgraph plot widget with configurable channels."""
+"""Real-time pyqtgraph plot widget with configurable channels and device selection."""
 
 import logging
 import time
@@ -9,7 +9,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -28,11 +30,12 @@ TRACE_COLOURS = [
 
 
 class PlotWidget(QWidget):
-    """Real-time plotting widget using pyqtgraph.
+    """Real-time pyqtgraph plot widget with device switching.
 
-    Displays time-series traces for a specific device with a rolling
+    Displays time-series traces for a selected device with a rolling
     history window.  Supports dynamic trace selection via a
-    configuration dialog, auto-scaling, and thread-safe data push.
+    configuration dialog, device switching via dropdown, auto-scaling,
+    and thread-safe data push.
 
     Thread-safe: ``push_data`` can be called from any thread;
     the internal signal guarantees GUI updates happen in the main
@@ -46,21 +49,29 @@ class PlotWidget(QWidget):
         self,
         device_id: str = "",
         history_seconds: float = 60.0,
+        global_t0: Optional[float] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._device_id = device_id
         self._history_seconds = history_seconds
+        self._t0: Optional[float] = global_t0
+        self._y_label_set: bool = False
+        self._all_device_ids: List[str] = []
+        # Thread-safe selected device (read from worker threads in push_data)
+        self._selected_device: str = device_id
 
         self._channels: Dict[str, Dict[str, Any]] = {}
         self._buffers: Dict[str, deque] = {}
         self._curves: Dict[str, pg.PlotDataItem] = {}
-        self._t0: Optional[float] = None
-        self._y_label_set: bool = False
 
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -85,6 +96,19 @@ class PlotWidget(QWidget):
 
         toolbar = QHBoxLayout()
         toolbar.setSpacing(6)
+
+        # Device selector dropdown
+        dev_label = QLabel("Device:")
+        dev_label.setStyleSheet("color: #aaa;")
+        toolbar.addWidget(dev_label)
+
+        self._device_combo = QComboBox()
+        self._device_combo.setMinimumWidth(80)
+        self._device_combo.setToolTip("Select device to display")
+        self._device_combo.currentTextChanged.connect(self._on_device_changed)
+        toolbar.addWidget(self._device_combo)
+
+        toolbar.addSpacing(8)
 
         self._configure_btn = QPushButton("Channels")
         self._configure_btn.setToolTip("Configure visible channels and appearance")
@@ -111,14 +135,23 @@ class PlotWidget(QWidget):
 
         layout.addLayout(toolbar)
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def push_data(
         self,
         device_id: str,
         timestamp: datetime,
         data: Dict[str, Any],
     ) -> None:
-        """Push a measurement update.  Thread-safe."""
-        if self._device_id and device_id != self._device_id:
+        """Push a measurement update.  Thread-safe.
+
+        Only forwards data matching the currently selected device.
+        """
+        # Use _selected_device (plain str, safe to read from any thread)
+        # instead of _device_combo.currentText() (Qt widget, GUI thread only)
+        if self._selected_device and device_id != self._selected_device:
             return
         ts_float = timestamp.timestamp()
         self._data_arrived.emit(device_id, ts_float, dict(data))
@@ -166,8 +199,7 @@ class PlotWidget(QWidget):
             self._update_curve(channel_name)
 
     def clear(self) -> None:
-        """Clear all plot data."""
-        self._t0 = None
+        """Clear all plot data (preserves t0 for shared timeline)."""
         self._y_label_set = False
         for buf in self._buffers.values():
             buf.clear()
@@ -184,11 +216,36 @@ class PlotWidget(QWidget):
 
     @property
     def device_id(self) -> str:
-        return self._device_id
+        return self._selected_device or self._device_id
 
     @device_id.setter
     def device_id(self, value: str) -> None:
         self._device_id = value
+        self._selected_device = value
+        if value and value in self._all_device_ids:
+            idx = self._device_combo.findText(value)
+            if idx >= 0:
+                self._device_combo.setCurrentIndex(idx)
+
+    def set_available_devices(self, device_ids: List[str]) -> None:
+        """Update the device dropdown with available devices."""
+        self._all_device_ids = list(device_ids)
+        current = self._selected_device
+        self._device_combo.blockSignals(True)
+        self._device_combo.clear()
+        self._device_combo.addItems(device_ids)
+        if current and current in device_ids:
+            self._device_combo.setCurrentText(current)
+        elif device_ids:
+            self._device_combo.setCurrentIndex(0)
+            self._device_id = device_ids[0]
+            self._selected_device = device_ids[0]
+        self._device_combo.blockSignals(False)
+
+    def set_global_t0(self, t0: float) -> None:
+        """Set a shared t0 so all plots use the same x-axis origin."""
+        if self._t0 is None:
+            self._t0 = t0
 
     @property
     def channels(self) -> List[str]:
@@ -203,18 +260,19 @@ class PlotWidget(QWidget):
         """Access the underlying pyqtgraph PlotWidget."""
         return self._plot
 
+    # ------------------------------------------------------------------
+    # Internal slots
+    # ------------------------------------------------------------------
+
     def _on_data_arrived(
         self, device_id: str, ts_float: float, data: Dict[str, Any]
     ) -> None:
-        """Slot: runs in GUI thread.  Append data and update curves."""
-        # Track first timestamp for relative x-axis
+        """Slot: runs in GUI thread.  Append data and update visible curves only."""
         if self._t0 is None:
             self._t0 = ts_float
         t_rel = ts_float - self._t0
 
         flat = self._extract_values(data)
-
-        # Auto-detect unit from VCU-style data and set y-axis label once
         self._auto_detect_unit(data)
 
         for channel_name, cfg in self._channels.items():
@@ -228,7 +286,9 @@ class PlotWidget(QWidget):
             self._buffers[channel_name].append((t_rel, value))
 
         self._trim_buffers()
-        for channel_name in self._channels:
+        for channel_name, cfg in self._channels.items():
+            if not cfg.get("visible", True):
+                continue
             self._update_curve(channel_name)
 
     def _on_configure(self) -> None:
@@ -258,7 +318,8 @@ class PlotWidget(QWidget):
                             pg.mkPen(color=new_colour, width=2)
                         )
 
-            # Hide/show curves based on new visibility and re-range y-axis
+            # Hide/show curves based on new visibility.
+            # Clear hidden channel buffers so old data never reappears.
             for name, cfg in self._channels.items():
                 curve = self._curves.get(name)
                 if curve is None:
@@ -267,12 +328,33 @@ class PlotWidget(QWidget):
                     self._update_curve(name)
                 else:
                     curve.setData([], [])
+                    buf = self._buffers.get(name)
+                    if buf is not None:
+                        buf.clear()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+    def _on_device_changed(self, new_device: str) -> None:
+        """Handle device dropdown change -- clear data for the switch."""
+        if not new_device:
+            return
+        self._device_id = new_device
+        self._selected_device = new_device
+        self._y_label_set = False
+        for buf in self._buffers.values():
+            buf.clear()
+        for curve in self._curves.values():
+            curve.setData([], [])
+        self._plot.setLabel("left", "Value")
+        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        logger.debug("PlotWidget: switched to device %r", new_device)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _extract_values(data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract scalar values from a measu
-rement dict.
+        """Extract scalar values from a measurement dict.
 
         Handles both flat dicts and VCU-style nested dicts
         (same convention as DataStore._flatten_data).
