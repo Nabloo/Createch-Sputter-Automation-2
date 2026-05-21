@@ -20,6 +20,7 @@ from src.config import (
     set_window_geometry,
 )
 from src.gui.main_window import MainWindow
+from src.gui.theme import apply_dark_theme, apply_light_theme
 from src.devices.device_manager import DeviceManager
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,9 @@ def _on_about_to_quit() -> None:
         if _device_manager is not None:
             _device_manager.shutdown()
         if _window is not None:
+            # Persist theme preference
+            if hasattr(_window, '_theme_action'):
+                _config.setdefault("gui", {})["theme"] = "dark" if _window._theme_action.isChecked() else "light"
             if _window.isMaximized():
                 geom = _window.normalGeometry()
                 set_window_geometry(
@@ -88,6 +92,13 @@ def main() -> None:
     app.setOrganizationName("SputterAutomation")
 
     _window = MainWindow(app)
+    _window.set_config(_config)
+
+    # Apply saved theme preference (defaults to dark)
+    theme = _config.get("gui", {}).get("theme", "dark")
+    if theme == "light":
+        apply_light_theme(app)
+        _window._theme_action.setChecked(False)
 
     # ---- Create DeviceManager (wires everything: devices, engine, store, GUI) ----
     _device_manager = DeviceManager(_config, _window)

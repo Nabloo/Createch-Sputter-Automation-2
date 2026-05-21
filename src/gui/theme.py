@@ -73,6 +73,7 @@ def apply_dark_theme(app: QApplication) -> None:
             padding: 4px;
             border-radius: 3px;
             background-color: #2d2d30;
+            color: #dcdcde;
         }
         QMainWindow::separator {
             width: 2px;
@@ -116,5 +117,49 @@ def apply_dark_theme(app: QApplication) -> None:
             background-color: #2d2d30;
             padding: 4px 8px;
             border-bottom: 1px solid #3c3c3e;
+        }
+    """)
+
+
+def apply_light_theme(app: QApplication) -> None:
+    """Apply a light Fusion-style palette to *app*.
+
+    Clean light theme for well-lit environments.
+    """
+    app.setStyle("Fusion")
+    app.setPalette(app.style().standardPalette())
+
+    app.setStyleSheet("""
+        QToolTip {
+            border: 1px solid #c0c0c0;
+            padding: 4px;
+            border-radius: 3px;
+            background-color: #ffffff;
+            color: #1e1e1e;
+        }
+        QMainWindow::separator {
+            width: 2px;
+            height: 2px;
+            background: #c0c0c0;
+        }
+        QStatusBar {
+            background-color: #0078d4;
+            color: #ffffff;
+        }
+        QStatusBar QLabel {
+            color: #ffffff;
+            padding: 2px 6px;
+        }
+        QToolBar {
+            spacing: 4px;
+            padding: 2px;
+        }
+        QDockWidget {
+            titlebar-close-icon: none;
+            titlebar-normal-icon: none;
+        }
+        QDockWidget::title {
+            padding: 4px 8px;
+            border-bottom: 1px solid #c0c0c0;
         }
     """)

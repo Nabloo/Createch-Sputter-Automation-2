@@ -13,7 +13,6 @@ Responsibilities:
 """
 
 import logging
-import time
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt
@@ -30,7 +29,6 @@ from src.config import get_device_configs, get_plot_configs, get_device_panel_co
 from src.data.datastore import DataStore
 from src.devices.base_device import BaseDevice
 from src.devices.vcu_controller import VCUController
-from src.gui.add_plot_dialog import AddPlotDialog
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
 
@@ -72,8 +70,9 @@ class DeviceManager:
         self._panels: Dict[str, DevicePanel] = {}
         # plot dock_id → PlotWidget
         self._plots: Dict[str, PlotWidget] = {}
-        # Shared x-axis origin — set at init so startup + dynamic plots align
-        self._global_t0: Optional[float] = time.time()
+        # Shared x-axis origin — None until first measurement arrives.
+        # t=0 means the moment the first data point is received, not app start.
+        self._global_t0: Optional[float] = None
 
         # Wire engine → data store
         self._engine.subscribe(self._store.on_update)
@@ -298,7 +297,7 @@ class DeviceManager:
             dock_id = pc.get("dock_id", f"plot_{device_id}")
             channels = pc.get("channels", [])
             colours = pc.get("colours")
-            history = pc.get("history_seconds", 60.0)
+            history = pc.get("history_seconds", 0)
             area = _AREA_MAP.get(pc.get("area", "right"), Qt.RightDockWidgetArea)
 
             # Auto-derive channels from device config if not explicitly set
@@ -317,6 +316,11 @@ class DeviceManager:
             if channels:
                 plot.set_channels(channels, colours)
 
+            # Restore visibility state (all channels saved, not just visible)
+            visibility = pc.get("visibility")
+            if visibility:
+                plot.apply_visibility(visibility)
+
             # Wire remove button
             plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
             # Persist state changes (device switch, channel config, etc.)
@@ -332,43 +336,22 @@ class DeviceManager:
     # ------------------------------------------------------------------
 
     def add_plot(self) -> None:
-        """Open a dialog to add a new plot widget.
+        """Add a new plot widget for the first device with all channels enabled.
 
-        Device selection happens via the plot's own dropdown.
-        The dialog only asks which channels to display.
+        No dialog — the user can change device/channels later via the
+        plot's own dropdown and Channels button.
         """
         device_ids = list(self._devices.keys())
         if not device_ids:
             logger.warning("No devices available; cannot add plot")
             return
 
-        # Collect all channel names across all devices
-        all_channels: List[str] = []
-        for device_id in device_ids:
-            dev_cfg = find_device_config(self._config, device_id)
-            if dev_cfg:
-                num = dev_cfg.get("number of pressure sensors", 1)
-                for i in range(1, num + 1):
-                    ch_name = f"ch{i}_pressure"
-                    if ch_name not in all_channels:
-                        all_channels.append(ch_name)
-
-        # Default to the first device
         default_device = device_ids[0]
+        dev_cfg = find_device_config(self._config, default_device)
+        num = dev_cfg.get("number of pressure sensors", 1) if dev_cfg else 1
+        channels = [f"ch{i}_pressure" for i in range(1, num + 1)]
 
-        dlg = AddPlotDialog(
-            channels=all_channels,
-            parent=self._window,
-        )
-        if not dlg.exec():
-            return
-
-        channels = dlg.selected_channels
         dock_id = f"plot_{len(self._plots)}"
-
-        if not channels:
-            logger.warning("No channels selected for new plot; skipped")
-            return
 
         plot = PlotWidget(
             device_id=default_device,
@@ -426,17 +409,16 @@ class DeviceManager:
                     if val == wa:
                         area = name
                         break
-            visible = plot.visible_channels
-            colours = [
-                c for ch, c in zip(plot.channels, plot.channel_colours)
-                if ch in visible
-            ]
+            all_channels = plot.channels
+            all_colours = plot.channel_colours
+            visibility = plot.channel_visibility
             plots_data.append({
                 "dock_id": dock_id,
                 "device_id": plot.device_id,
                 "area": area,
-                "channels": visible,
-                "colours": colours,
+                "channels": all_channels,
+                "colours": all_colours,
+                "visibility": visibility,
                 "history_seconds": plot.history_seconds,
             })
         set_plot_configs(self._config, plots_data)

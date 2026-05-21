@@ -48,7 +48,7 @@ class PlotWidget(QWidget):
     def __init__(
         self,
         device_id: str = "",
-        history_seconds: float = 60.0,
+        history_seconds: float = 0,
         global_t0: Optional[float] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -245,6 +245,54 @@ class PlotWidget(QWidget):
         if self._t0 is None:
             self._t0 = t0
 
+    def set_dark_mode(self, dark: bool) -> None:
+        """Update plot styling to match the application theme."""
+        if dark:
+            self._plot.setBackground("#1e1e1e")
+            grid_alpha = 0.3
+            axis_color = "#888888"
+        else:
+            self._plot.setBackground("#ffffff")
+            grid_alpha = 0.15
+            axis_color = "#555555"
+        self._plot.showGrid(x=True, y=True, alpha=grid_alpha)
+        axis_pen = pg.mkPen(color=axis_color, width=1)
+        for axis_name in ("left", "bottom"):
+            axis = self._plot.getAxis(axis_name)
+            axis.setPen(axis_pen)
+            axis.setTextPen(axis_pen)
+
+    def set_channel_visibility(self, name: str, visible: bool) -> None:
+        """Show or hide a single channel without clearing its data buffer."""
+        cfg = self._channels.get(name)
+        if cfg is None:
+            return
+        cfg["visible"] = visible
+        curve = self._curves.get(name)
+        if curve is None:
+            return
+        if visible:
+            self._update_curve(name)
+        else:
+            curve.setData([], [])
+        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        self.state_changed.emit()
+
+    def apply_visibility(self, visibility: Dict[str, bool]) -> None:
+        """Apply a visibility map to all channels (used when restoring from config)."""
+        for ch_name, vis in visibility.items():
+            if ch_name in self._channels:
+                self._channels[ch_name]["visible"] = vis
+        for ch_name, cfg in self._channels.items():
+            curve = self._curves.get(ch_name)
+            if curve is None:
+                continue
+            if cfg.get("visible", True):
+                self._update_curve(ch_name)
+            else:
+                curve.setData([], [])
+        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+
     @property
     def channels(self) -> List[str]:
         """Currently configured channel names (all, not just visible)."""
@@ -357,6 +405,7 @@ class PlotWidget(QWidget):
             return
         self._device_id = new_device
         self._selected_device = new_device
+        self._t0 = None
         self._y_label_set = False
         for buf in self._buffers.values():
             buf.clear()
@@ -400,6 +449,8 @@ class PlotWidget(QWidget):
             [], [],
             pen=pg.mkPen(color=colour, width=2),
             name=name,
+            symbol='o',
+            symbolSize=4,
         )
         self._curves[name] = curve
 

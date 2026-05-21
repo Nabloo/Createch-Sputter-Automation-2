@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.dock_manager import DockManager
-from src.gui.theme import apply_dark_theme
+from src.gui.theme import apply_dark_theme, apply_light_theme
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,15 @@ class MainWindow(QMainWindow):
         self._toggle_statusbar_action.setChecked(True)
         self._toggle_statusbar_action.triggered.connect(self._on_toggle_statusbar)
         view_menu.addAction(self._toggle_statusbar_action)
+
+        view_menu.addSeparator()
+
+        self._theme_action = QAction("&Dark Theme", self)
+        self._theme_action.setCheckable(True)
+        self._theme_action.setChecked(True)
+        self._theme_action.setStatusTip("Toggle between dark and light theme")
+        self._theme_action.triggered.connect(self._on_toggle_theme)
+        view_menu.addAction(self._theme_action)
 
         view_menu.addSeparator()
 
@@ -177,6 +186,28 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_statusbar(self, checked: bool) -> None:
         self._status_bar.setVisible(checked)
+
+    def _on_toggle_theme(self, checked: bool) -> None:
+        """Switch between dark and light Fusion themes."""
+        if checked:
+            apply_dark_theme(self._app)
+            self._theme_action.setText("&Dark Theme")
+        else:
+            apply_light_theme(self._app)
+            self._theme_action.setText("&Light Theme")
+        # Persist theme preference immediately (not just on quit)
+        if hasattr(self, '_config'):
+            self._config.setdefault("gui", {})["theme"] = "dark" if checked else "light"
+        # Propagate theme to all plot widgets
+        for panel_id in self.dock_manager.panel_ids():
+            dock = self.dock_manager.panel(panel_id)
+            if dock and hasattr(dock.widget(), 'set_dark_mode'):
+                dock.widget().set_dark_mode(checked)
+        logger.info("Theme switched to %s", "dark" if checked else "light")
+
+    def set_config(self, config: dict) -> None:
+        """Store a reference to the app config for theme persistence."""
+        self._config = config
 
     def _on_reset_layout(self) -> None:
         """Remove all docks and restore defaults."""

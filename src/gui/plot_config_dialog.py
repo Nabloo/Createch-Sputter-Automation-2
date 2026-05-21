@@ -97,10 +97,11 @@ class PlotConfigDialog(QDialog):
         history_layout = QFormLayout(history_group)
 
         self._history_spin = QSpinBox()
-        self._history_spin.setRange(5, 3600)
+        self._history_spin.setRange(0, 3600)
+        self._history_spin.setSpecialValueText("All")
         self._history_spin.setSuffix(" s")
         self._history_spin.setValue(int(self._history_seconds))
-        self._history_spin.setToolTip("Rolling history window in seconds")
+        self._history_spin.setToolTip("Rolling history window (0 = show everything)")
         history_layout.addRow("History window:", self._history_spin)
 
         layout.addWidget(history_group)
