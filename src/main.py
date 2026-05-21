@@ -20,6 +20,7 @@ from src.config import (
     set_window_geometry,
 )
 from src.gui.main_window import MainWindow
+from src.devices.device_manager import DeviceManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 _config: dict = {}
 _config_path: str = DEFAULT_CONFIG_PATH
 _window: Optional[MainWindow] = None
+_device_manager: Optional[DeviceManager] = None
 
 
 def setup_logging() -> None:
@@ -40,8 +42,10 @@ def setup_logging() -> None:
 
 def _on_about_to_quit() -> None:
     """Persist window geometry and save configuration before exit."""
-    global _config, _config_path, _window
+    global _config, _config_path, _window, _device_manager
     try:
+        if _device_manager is not None:
+            _device_manager.shutdown()
         if _window is not None:
             if _window.isMaximized():
                 geom = _window.normalGeometry()
@@ -84,6 +88,9 @@ def main() -> None:
     app.setOrganizationName("SputterAutomation")
 
     _window = MainWindow(app)
+
+    # ---- Create DeviceManager (wires everything: devices, engine, store, GUI) ----
+    _device_manager = DeviceManager(_config, _window)
 
     # Restore window geometry
     x, y, width, height, maximized = get_window_geometry(_config)
