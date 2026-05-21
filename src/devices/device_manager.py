@@ -31,6 +31,7 @@ from src.devices.base_device import BaseDevice
 from src.devices.vcu_controller import VCUController
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
+from src.data_logging.data_logger import DataLogger
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,9 @@ class DeviceManager:
         # Build everything from config
         self._setup_devices()
         self._setup_plots()
+
+        # CSV data logger (subscribes to DataStore for automated logging)
+        self._data_logger = DataLogger(config, self._store)
 
         # Balance dock sizes after the event loop starts (when heights are known)
         QTimer.singleShot(0, self._balance_docks)
@@ -550,6 +554,7 @@ class DeviceManager:
     def shutdown(self) -> None:
         """Stop acquisition, stop reconnect loops, disconnect, and clean up."""
         self._engine.stop()
+        self._data_logger.shutdown()
         for device_id, device in list(self._devices.items()):
             device.stop_reconnect_loop()
             device.disconnect()

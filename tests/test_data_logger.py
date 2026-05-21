@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from unittest import TestCase, main
 
 from src.data.datastore import DataStore
-from src.logging.data_logger import DataLogger
+from src.data_logging.data_logger import DataLogger
 
 
 class TestDataLogger(TestCase):
