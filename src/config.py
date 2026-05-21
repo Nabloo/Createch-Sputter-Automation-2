@@ -1,9 +1,9 @@
-"""Configuration loader and saver."""
+"""Configuration loader, saver, and state-persistence helpers."""
 
 import copy
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
 DEFAULT_CONFIG_PATH = "config.json"
 
@@ -16,9 +16,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "gui": {
         "theme": "dark",
+        "window": {},
         "plots": [],
+        "device_panels": [],
     },
 }
+
+
+# ------------------------------------------------------------------
+# Core file I/O
+# ------------------------------------------------------------------
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -55,6 +62,133 @@ def save_config(config: Dict[str, Any], path: str = DEFAULT_CONFIG_PATH) -> None
         json.dump(config, f, indent=2)
 
 
+# ------------------------------------------------------------------
+# Device helpers
+# ------------------------------------------------------------------
+
+
 def get_device_configs(config: Dict[str, Any]) -> list:
     """Extract list of device configurations."""
     return config.get("devices", [])
+
+
+def find_device_config(
+    config: Dict[str, Any], device_id: str
+) -> Optional[Dict[str, Any]]:
+    """Return the device config dict for *device_id*, or None."""
+    for dev in config.get("devices", []):
+        if dev.get("device_id") == device_id:
+            return dev
+    return None
+
+
+def update_device_config(
+    config: Dict[str, Any],
+    device_id: str,
+    updates: Dict[str, Any],
+) -> bool:
+    """Merge *updates* into the config entry for *device_id*.
+
+    Returns True if the device was found and updated.
+    """
+    dev = find_device_config(config, device_id)
+    if dev is None:
+        return False
+    dev.update(updates)
+    return True
+
+
+# ------------------------------------------------------------------
+# Window geometry persistence
+# ------------------------------------------------------------------
+
+
+def get_window_geometry(config: Dict[str, Any]) -> Tuple[int, int, int, int, bool]:
+    """Return (x, y, width, height, maximized) from config."""
+    win = config.get("gui", {}).get("window", {})
+    return (
+        win.get("x", 100),
+        win.get("y", 100),
+        win.get("width", 1280),
+        win.get("height", 800),
+        win.get("maximized", False),
+    )
+
+
+def set_window_geometry(
+    config: Dict[str, Any],
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    maximized: bool = False,
+) -> None:
+    """Store window geometry into the config dict."""
+    gui = config.setdefault("gui", {})
+    win = gui.setdefault("window", {})
+    win["x"] = x
+    win["y"] = y
+    win["width"] = width
+    win["height"] = height
+    win["maximized"] = maximized
+
+
+# ------------------------------------------------------------------
+# Plot configuration persistence
+# ------------------------------------------------------------------
+
+
+def get_plot_configs(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the list of saved plot configurations."""
+    return config.get("gui", {}).get("plots", [])
+
+
+def set_plot_configs(
+    config: Dict[str, Any], plots: List[Dict[str, Any]]
+) -> None:
+    """Replace the plot configuration list."""
+    config.setdefault("gui", {})["plots"] = plots
+
+
+def upsert_plot_config(
+    config: Dict[str, Any],
+    dock_id: str,
+    device_id: str,
+    title: str,
+    area: str,
+    channels: List[str],
+    colours: List[str],
+    history_seconds: float,
+) -> None:
+    """Insert or update a single plot entry identified by *dock_id*."""
+    plots = config.setdefault("gui", {}).setdefault("plots", [])
+    for entry in plots:
+        if entry.get("dock_id") == dock_id:
+            entry.update({
+                "device_id": device_id,
+                "title": title,
+                "area": area,
+                "channels": channels,
+                "colours": colours,
+                "history_seconds": history_seconds,
+            })
+            return
+    plots.append({
+        "dock_id": dock_id,
+        "device_id": device_id,
+        "title": title,
+        "area": area,
+        "channels": channels,
+        "colours": colours,
+        "history_seconds": history_seconds,
+    })
+
+
+# ------------------------------------------------------------------
+# Device panel persistence
+# ------------------------------------------------------------------
+
+
+def get_device_panel_configs(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the list of saved device panel configurations."""
+    return config.get("gui", {}).get("device_panels", [])
