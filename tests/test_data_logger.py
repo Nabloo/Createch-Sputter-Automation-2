@@ -21,6 +21,7 @@ class TestDataLogger(TestCase):
                 "directory": self._tmpdir,
                 "rotation_enabled": True,
                 "flush_interval": 0.05,
+                "timezone_offset": 0,  # UTC for deterministic tests
             }
         }
         self._store = DataStore(history_size=100)

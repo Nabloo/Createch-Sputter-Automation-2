@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from src.data.datastore import DataStore
@@ -73,6 +73,17 @@ class DataLogger:
         # device_id → last date string (for midnight-rotation detection)
         self._last_date: Dict[str, str] = {}
 
+        # -------- Timezone resolution --------
+        # Try to auto-detect OS timezone, fall back to GMT+2
+        try:
+            os_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            detected_tz = os_tz if os_tz is not None else timezone(timedelta(hours=2))
+        except Exception:
+            detected_tz = timezone(timedelta(hours=2))
+        # Config can override (handy for deterministic tests)
+        tz_offset = log_cfg.get("timezone_offset")
+        self._tz = timezone(timedelta(hours=tz_offset)) if tz_offset is not None else detected_tz
+
         self._last_flush_time: float = time.monotonic()
 
         if self._enabled:
@@ -95,14 +106,16 @@ class DataLogger:
             return
 
         with self._lock:
-            # Determine the date for rotation tracking
-            date_str = timestamp.strftime("%Y-%m-%d")
+            # Determine the date in the log timezone for rotation tracking
+            aware = timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=timezone.utc)
+            local_ts = aware.astimezone(self._tz)
+            date_str = local_ts.strftime("%Y-%m-%d")
             file_info = self._ensure_file(device_id, date_str, data)
             if file_info is None:
                 return  # headers not yet determined – row buffered for next call
 
-            # Build the CSV row
-            row = self._build_row(timestamp, data, file_info["headers"])
+            # Build the CSV row (timestamp in log timezone)
+            row = self._build_row(local_ts, data, file_info["headers"])
             self._buffers.setdefault(device_id, []).append(row)
 
             # Flush if enough time has passed
