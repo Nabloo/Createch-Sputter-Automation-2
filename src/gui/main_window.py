@@ -158,6 +158,13 @@ class MainWindow(QMainWindow):
         self._add_plot_action.setEnabled(False)
         self._toolbar.addAction(self._add_plot_action)
 
+        self._toolbar.addSeparator()
+
+        self._clear_all_action = QAction("\u267b  Clear All", self)
+        self._clear_all_action.setStatusTip("Clear data from all plots")
+        self._clear_all_action.setEnabled(False)
+        self._toolbar.addAction(self._clear_all_action)
+
     # ------------------------------------------------------------------
     # Status bar
     # ------------------------------------------------------------------

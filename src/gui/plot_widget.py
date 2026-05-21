@@ -49,13 +49,16 @@ class PlotWidget(QWidget):
         self,
         device_id: str = "",
         history_seconds: float = 0,
-        global_t0: Optional[float] = None,
+        global_t0: Optional[List[Optional[float]]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._device_id = device_id
         self._history_seconds = history_seconds
-        self._t0: Optional[float] = global_t0
+        # Shared mutable t0 container — when this plot first sees data,
+        # it writes the timestamp here so other plots can stay in sync.
+        self._shared_t0: Optional[List[Optional[float]]] = global_t0
+        self._t0: Optional[float] = global_t0[0] if global_t0 else None
         self._y_label_set: bool = False
         self._all_device_ids: List[str] = []
         # Thread-safe selected device (read from worker threads in push_data)
@@ -240,10 +243,11 @@ class PlotWidget(QWidget):
             self._selected_device = device_ids[0]
         self._device_combo.blockSignals(False)
 
-    def set_global_t0(self, t0: float) -> None:
-        """Set a shared t0 so all plots use the same x-axis origin."""
-        if self._t0 is None:
-            self._t0 = t0
+    def set_global_t0(self, t0: Optional[List[Optional[float]]]) -> None:
+        """Replace the shared t0 reference (used when restoring from config)."""
+        self._shared_t0 = t0
+        if t0 is not None and t0[0] is not None and self._t0 is None:
+            self._t0 = t0[0]
 
     def set_dark_mode(self, dark: bool) -> None:
         """Update plot styling to match the application theme."""
@@ -317,6 +321,19 @@ class PlotWidget(QWidget):
         return {name: cfg.get("visible", True) for name, cfg in self._channels.items()}
 
     @property
+    def t0(self) -> Optional[float]:
+        """The x-axis origin (seconds since epoch).
+
+        ``None`` until the first data point arrives.  Can be set externally
+        to synchronise the x-axis across multiple plots.
+        """
+        return self._t0
+
+    @t0.setter
+    def t0(self, value: Optional[float]) -> None:
+        self._t0 = value
+
+    @property
     def history_seconds(self) -> float:
         return self._history_seconds
 
@@ -337,6 +354,11 @@ class PlotWidget(QWidget):
         its full history."""
         if self._t0 is None:
             self._t0 = ts_float
+            # Only write the shared t0 once — the first-ever data point across
+            # ALL plots.  If a plot switches devices and resets its own _t0,
+            # it must NOT overwrite the shared origin that other plots rely on.
+            if self._shared_t0 is not None and self._shared_t0[0] is None:
+                self._shared_t0[0] = ts_float
         t_rel = ts_float - self._t0
 
         flat = self._extract_values(data)

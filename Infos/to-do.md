@@ -1,8 +1,7 @@
 # To-Do
-- [ ] remove the add panel dialogue comletely. If a pannel is added, just show a pannel for the first device with all channels enabled. The user can change the device later.
-- [ ] always have all channels available in the channel pannel to reanable them later
-- [ ] Start x-axis 0 is the start of the first measurement, not the opening time
-- [ ] Default amount of time to show is the whole measurement
-- [ ] Show each measurement as a small dot on the graph
-- [ ] Add switch to change between light and dark mode under view settings
-- [ ] Tooltips in darkmode have black text on a black background. Change the text color to white in dark mode.
+- [ ] the history window should be by default as large as possible not only 60s.
+- [ ] the history for all plots should be the same
+- [ ] if a new pannel is added, it should display the same history and have the same x-axis as the rest of the panels
+- [ ] if a panel with only one channel selected is safed on close, after the next start of the programm, the panel only has the option to show this channel. It should still be able to show all channels if renabled.
+- [ ] add a button to clear all pannels
+- [ ] there is currently a lot of unused space between the device pannel (the one with the device name and the device type) and the plot pannels. Give the device pannel only as much space as it needs to not be cut of and give the rest to the plot pannels.

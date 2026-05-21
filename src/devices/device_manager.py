@@ -15,7 +15,7 @@ Responsibilities:
 import logging
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 try:
     import serial.tools.list_ports as list_ports
@@ -70,9 +70,11 @@ class DeviceManager:
         self._panels: Dict[str, DevicePanel] = {}
         # plot dock_id → PlotWidget
         self._plots: Dict[str, PlotWidget] = {}
-        # Shared x-axis origin — None until first measurement arrives.
-        # t=0 means the moment the first data point is received, not app start.
-        self._global_t0: Optional[float] = None
+        # Shared x-axis origin — a mutable container updated by the first
+        # PlotWidget that receives data.  All plots share the same list
+        # reference; when any plot writes ts_float into [0], everyone
+        # (including plots added later) sees the same origin.
+        self._global_t0: List[Optional[float]] = [None]
 
         # Wire engine → data store
         self._engine.subscribe(self._store.on_update)
@@ -80,6 +82,9 @@ class DeviceManager:
         # Build everything from config
         self._setup_devices()
         self._setup_plots()
+
+        # Balance dock sizes after the event loop starts (when heights are known)
+        QTimer.singleShot(0, self._balance_docks)
 
         # Wire toolbar and status bar
         self._wire_toolbar()
@@ -290,22 +295,37 @@ class DeviceManager:
         return panel
 
     def _setup_plots(self) -> None:
-        """Create PlotWidget instances from config and wire to DataStore."""
+        """Create PlotWidget instances from config and wire to DataStore.
+
+        Always derives the *full* channel list from the device config so
+        every channel is available for re-enabling, even if only a subset
+        was visible when the config was saved.
+        """
         device_ids = list(self._devices.keys())
         for pc in get_plot_configs(self._config):
             device_id = pc.get("device_id", "")
             dock_id = pc.get("dock_id", f"plot_{device_id}")
-            channels = pc.get("channels", [])
-            colours = pc.get("colours")
             history = pc.get("history_seconds", 0)
             area = _AREA_MAP.get(pc.get("area", "right"), Qt.RightDockWidgetArea)
 
-            # Auto-derive channels from device config if not explicitly set
-            if not channels:
-                dev_cfg = find_device_config(self._config, device_id)
-                if dev_cfg:
-                    num_sensors = dev_cfg.get("number of pressure sensors", 1)
-                    channels = [f"ch{i}_pressure" for i in range(1, num_sensors + 1)]
+            # Always derive the full channel list from the device config.
+            # The saved "channels" / "colours" lists may be incomplete
+            # (e.g. from an older config that only stored visible channels).
+            dev_cfg = find_device_config(self._config, device_id)
+            if dev_cfg:
+                num_sensors = dev_cfg.get("number of pressure sensors", 1)
+                all_channels = [f"ch{i}_pressure" for i in range(1, num_sensors + 1)]
+            else:
+                all_channels = pc.get("channels", [])
+
+            # Merge saved colours: saved channels keep their colour;
+            # newly-derived channels get auto-assigned later.
+            saved_channels = pc.get("channels", [])
+            saved_colours = pc.get("colours", []) or []
+            colour_map: Dict[str, str] = {}
+            for ch, col in zip(saved_channels, saved_colours):
+                colour_map[ch] = col
+            merged_colours = [colour_map[ch] for ch in all_channels if ch in colour_map]
 
             plot = PlotWidget(
                 device_id=device_id,
@@ -313,10 +333,10 @@ class DeviceManager:
                 global_t0=self._global_t0,
             )
             plot.set_available_devices(device_ids)
-            if channels:
-                plot.set_channels(channels, colours)
+            if all_channels:
+                plot.set_channels(all_channels, merged_colours or None)
 
-            # Restore visibility state (all channels saved, not just visible)
+            # Restore visibility state from saved config.
             visibility = pc.get("visibility")
             if visibility:
                 plot.apply_visibility(visibility)
@@ -340,6 +360,9 @@ class DeviceManager:
 
         No dialog — the user can change device/channels later via the
         plot's own dropdown and Channels button.
+
+        The new plot inherits the history window and x-axis origin
+        from existing plots so it stays in sync.
         """
         device_ids = list(self._devices.keys())
         if not device_ids:
@@ -351,10 +374,16 @@ class DeviceManager:
         num = dev_cfg.get("number of pressure sensors", 1) if dev_cfg else 1
         channels = [f"ch{i}_pressure" for i in range(1, num + 1)]
 
+        # Inherit history and x-axis origin from existing plots
+        existing = list(self._plots.values())
+        shared_t0 = existing[0].t0 if existing else self._global_t0[0]
+        shared_history = existing[0].history_seconds if existing else 0
+
         dock_id = f"plot_{len(self._plots)}"
 
         plot = PlotWidget(
             device_id=default_device,
+            history_seconds=shared_history,
             global_t0=self._global_t0,
         )
         plot.set_available_devices(device_ids)
@@ -371,7 +400,7 @@ class DeviceManager:
         # Persist state changes
         plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
 
-        self._balance_plot_docks()
+        self._balance_docks()
 
         # Persist the new plot config immediately
         self._persist_plots()
@@ -385,13 +414,22 @@ class DeviceManager:
             return
         self._store.unsubscribe(plot.push_data)
         self._window.dock_manager.remove_panel(dock_id)
-        self._balance_plot_docks()
+        self._balance_docks()
         self._persist_plots()
         logger.info("Removed plot %r", dock_id)
 
     def _on_plot_state_changed(self, dock_id: str) -> None:
-        """Called when a plot's device, channels, or visibility changes."""
+        """Called when a plot's device, channels, visibility, or history changes."""
+        plot = self._plots.get(dock_id)
+        if plot is not None:
+            self._sync_history(plot.history_seconds)
         self._persist_plots()
+
+    def _sync_history(self, seconds: float) -> None:
+        """Propagate *seconds* as the history window to every plot."""
+        for plot in self._plots.values():
+            if plot.history_seconds != seconds:
+                plot.set_history_seconds(seconds)
 
     def _persist_plots(self) -> None:
         """Save all current plot configurations to config.json.
@@ -425,29 +463,49 @@ class DeviceManager:
         save_config(self._config)
         logger.debug("Plot configurations persisted (%d plots)", len(plots_data))
 
-    def _balance_plot_docks(self) -> None:
-        """Distribute available space equally among plot docks."""
-        docks = [
+    def _balance_docks(self) -> None:
+        """Give device panels minimal space and distribute the rest among
+        plot docks, so plots get as much screen real estate as possible."""
+        device_docks = [
+            self._window.dock_manager.panel(f"device_{did}")
+            for did in self._devices
+        ]
+        plot_docks = [
             self._window.dock_manager.panel(did)
             for did in self._plots
         ]
-        docks = [d for d in docks if d is not None]
-        if len(docks) < 2:
+        device_docks = [d for d in device_docks if d is not None]
+        plot_docks = [d for d in plot_docks if d is not None]
+
+        all_docks = device_docks + plot_docks
+        if len(all_docks) < 2:
             return
-        # Determine the main axis of the docks
-        first_area = self._window.dockWidgetArea(docks[0])
-        if first_area in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea):
-            # Vertical docks — share height
-            total = sum(d.height() for d in docks)
-            each = max(100, total // len(docks))
-            sizes = [each] * len(docks)
-            self._window.resizeDocks(docks, sizes, Qt.Vertical)
-        elif first_area in (Qt.TopDockWidgetArea, Qt.BottomDockWidgetArea):
-            # Horizontal docks — share width
-            total = sum(d.width() for d in docks)
-            each = max(200, total // len(docks))
-            sizes = [each] * len(docks)
-            self._window.resizeDocks(docks, sizes, Qt.Horizontal)
+
+        # Only balance vertical docks (left/right areas)
+        first_area = self._window.dockWidgetArea(all_docks[0])
+        if first_area not in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea):
+            return
+
+        total_height = sum(d.height() for d in all_docks)
+        # Device panels get exactly their size-hint height (never more)
+        device_sizes: List[int] = []
+        for d in device_docks:
+            hint = d.widget().sizeHint().height() if d.widget() else 80
+            device_sizes.append(min(hint, d.height()))
+
+        device_allocated = sum(device_sizes)
+        remaining = max(0, total_height - device_allocated)
+        if plot_docks:
+            each_plot = max(100, remaining // len(plot_docks))
+            plot_sizes = [each_plot] * len(plot_docks)
+            sizes = device_sizes + plot_sizes
+            self._window.resizeDocks(all_docks, sizes, Qt.Vertical)
+
+    def clear_all_plots(self) -> None:
+        """Clear all plot data without removing the plot widgets."""
+        for plot in self._plots.values():
+            plot.clear()
+        logger.info("Cleared all %d plot(s)", len(self._plots))
 
     def _wire_toolbar(self) -> None:
         """Enable and connect MainWindow toolbar actions."""
@@ -457,12 +515,14 @@ class DeviceManager:
         w._connect_action.setEnabled(True)
         w._disconnect_action.setEnabled(True)
         w._add_plot_action.setEnabled(True)
+        w._clear_all_action.setEnabled(True)
 
         w._start_action.triggered.connect(self.start_all)
         w._stop_action.triggered.connect(self.stop_all)
         w._connect_action.triggered.connect(self.connect_all)
         w._disconnect_action.triggered.connect(self.disconnect_all)
         w._add_plot_action.triggered.connect(self.add_plot)
+        w._clear_all_action.triggered.connect(self.clear_all_plots)
 
     def _wire_status_timer(self) -> None:
         """Wire MainWindow's existing status refresh timer to our method."""
