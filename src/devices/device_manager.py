@@ -120,8 +120,10 @@ class DeviceManager:
             logger.warning("connect_device: unknown device %r", device_id)
             return False
         if device.connected:
+            logger.info("%s already connected", device_id)
             return True
         ok = device.connect()
+        logger.info("connect_device: %s -> %s", device_id, ok)
         panel = self._panels.get(device_id)
         if panel:
             panel.set_connected(ok)
