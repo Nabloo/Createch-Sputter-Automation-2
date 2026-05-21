@@ -259,6 +259,31 @@ class TestAcquisitionEngineErrorHandling(unittest.TestCase):
         self.engine.stop()
         self.assertEqual(len(received), 0)
 
+    def test_add_device_connect_failure_does_not_crash(self):
+        """Regression test: add_device with a failing connect() must not crash.
+
+        The _report_error method previously referenced an undefined
+        "poll_interval" variable, causing a NameError that propagated
+        to the caller and crashed the application.
+        """
+        class FailingDevice(MockDevice):
+            def connect(self) -> bool:
+                raise RuntimeError("COM6 not found")
+
+        dev = FailingDevice("Mock-Fail")
+        errors: list[str] = []
+
+        def on_error(message: str) -> None:
+            errors.append(message)
+
+        self.engine.set_error_callback(on_error)
+        # Must not raise any exception
+        self.engine.add_device(dev, poll_interval=0.5)
+
+        self.assertTrue(any("Mock-Fail" in e for e in errors))
+        # Device should still be registered even if connect failed
+        self.assertIn("Mock-Fail", self.engine.device_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

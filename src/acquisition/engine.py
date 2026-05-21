@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 from src.devices.base_device import BaseDevice
 
@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 #: Signature for update callbacks: (device_id, timestamp, data_dict) -> None
 UpdateCallback = Callable[[str, datetime, Dict[str, Any]], None]
+
+#: Signature for error callbacks: (combined_message) -> None
+#: The message includes the device_id, e.g. "VCU-0: Poll error: …"
+ErrorCallback = Callable[[str], None]
 
 
 class AcquisitionEngine:
@@ -42,6 +46,7 @@ class AcquisitionEngine:
         self._threads: Dict[str, threading.Thread] = {}
         self._poll_interval: Dict[str, float] = {}
         self._subscribers: List[UpdateCallback] = []
+        self._error_callback: Optional[ErrorCallback] = None
         self._polling_active: Dict[str, bool] = {}
         self._lock = threading.RLock()
         self._started = False
@@ -77,7 +82,15 @@ class AcquisitionEngine:
 
         # Connect and start background reconnection *outside* the lock
         # so that slow serial operations don't block other threads.
-        device.connect()
+        try:
+            device.connect()
+            if not device.connected:
+                logger.warning("%s: failed to connect", device_id)
+                self._report_error(device_id, "Failed to connect")
+        except Exception as exc:
+            logger.warning("%s: connection error — %s", device_id, exc)
+            self._report_error(device_id, f"Connection error — {exc}")
+
         device.start_reconnect_loop()
 
         logger.info(
@@ -158,6 +171,16 @@ class AcquisitionEngine:
 
         logger.info("AcquisitionEngine: all polling workers stopped")
 
+    def set_error_callback(self, callback: Optional[ErrorCallback]) -> None:
+        """Register an optional callback for poll & connection errors.
+
+        The callback is invoked with a single combined string such as
+        ``"VCU-0: Poll error — …"`` from the worker thread *and* at the
+        :meth:`add_device` call site, so implementations must be
+        thread-safe (e.g. use a ``QThread`` signal).
+        """
+        self._error_callback = callback
+
     def subscribe(self, callback: UpdateCallback) -> None:
         """Subscribe to timestamped measurement updates."""
         with self._lock:
@@ -207,15 +230,34 @@ class AcquisitionEngine:
 
             except (ConnectionError, TimeoutError, OSError) as exc:
                 logger.debug("%s poll error: %s", device_id, exc)
+                self._report_error(device_id, f"Poll error: {exc}")
+                # Sleep in small steps so we can react to stop quickly
+                deadline = time.monotonic() + poll_interval
+                while time.monotonic() < deadline:
+                    if not self._polling_active.get(device_id, False):
+                        break
+                    time.sleep(min(0.1, deadline - time.monotonic()))
             except Exception:
                 logger.exception("%s unexpected poll error", device_id)
+                self._report_error(device_id, f"Unexpected poll error")
+                # Sleep in small steps so we can react to stop quickly
+                deadline = time.monotonic() + poll_interval
+                while time.monotonic() < deadline:
+                    if not self._polling_active.get(device_id, False):
+                        break
+                    time.sleep(min(0.1, deadline - time.monotonic()))
 
-            # Sleep in small steps so we can react to stop quickly
-            deadline = time.monotonic() + poll_interval
-            while time.monotonic() < deadline:
-                if not self._polling_active.get(device_id, False):
-                    return
-                time.sleep(min(0.1, deadline - time.monotonic()))
+    def _report_error(self, device_id: str, message: str) -> None:
+        """Invoke the error callback, if set.
+
+        Combines *device_id* and *message* into a single string so the
+        callback only needs one argument (compatible with Qt Signals).
+        """
+        if self._error_callback is not None:
+            try:
+                self._error_callback(f"{device_id}: {message}")
+            except Exception:
+                logger.exception("Error callback raised an exception")
 
     def _publish(
         self, device_id: str, timestamp: datetime, data: Dict[str, Any]

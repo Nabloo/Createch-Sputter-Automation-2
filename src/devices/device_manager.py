@@ -80,6 +80,9 @@ class DeviceManager:
         # Wire engine → data store
         self._engine.subscribe(self._store.on_update)
 
+        # Route engine poll errors to the status bar (thread-safe via Signal)
+        self._engine.set_error_callback(self._window.error_occurred.emit)
+
         # Build everything from config
         self._setup_devices()
         self._setup_plots()
@@ -129,13 +132,26 @@ class DeviceManager:
         """Connect a single device. Returns True on success."""
         device = self._devices.get(device_id)
         if device is None:
-            logger.warning("connect_device: unknown device %r", device_id)
+            msg = f"Unknown device {device_id}"
+            logger.warning("connect_device: %s", msg)
+            self._window.error_occurred.emit(msg)
             return False
         if device.connected:
             logger.info("%s already connected", device_id)
             return True
-        ok = device.connect()
-        logger.info("connect_device: %s -> %s", device_id, ok)
+        try:
+            ok = device.connect()
+        except Exception as exc:
+            msg = f"{device_id}: connection error — {exc}"
+            logger.warning("connect_device: %s", msg)
+            self._window.error_occurred.emit(msg)
+            return False
+        if not ok:
+            msg = f"{device_id}: failed to connect"
+            logger.warning("connect_device: %s", msg)
+            self._window.error_occurred.emit(msg)
+        else:
+            logger.info("%s connected", device_id)
         panel = self._panels.get(device_id)
         if panel:
             panel.set_connected(ok)
@@ -145,8 +161,6 @@ class DeviceManager:
                     firmware=device.firmware_version or "",  # type: ignore[attr-defined]
                 )
         self._refresh_status()
-        if ok:
-            logger.info("%s connected", device_id)
         return ok
 
     def disconnect_device(self, device_id: str) -> None:
@@ -263,12 +277,16 @@ class DeviceManager:
         dev_type = cfg.get("type", "")
         cls = _DEVICE_TYPE_MAP.get(dev_type)
         if cls is None:
-            logger.warning("Unknown device type %r; skipping", dev_type)
+            msg = f"Unknown device type {dev_type!r}; skipping"
+            logger.warning(msg)
+            self._window.error_occurred.emit(msg)
             return None
         try:
             return cls(cfg)
-        except Exception:
-            logger.exception("Failed to create %s", dev_type)
+        except Exception as exc:
+            msg = f"Failed to create {dev_type}: {exc}"
+            logger.exception(msg)
+            self._window.error_occurred.emit(msg)
             return None
 
     def _create_panel(

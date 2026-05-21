@@ -2,7 +2,7 @@
 
 import logging
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -34,8 +34,15 @@ class MainWindow(QMainWindow):
     :meth:`DockManager.add_panel`.
     """
 
+    # Thread-safe signal for error display.  Emitting from any thread
+    # will invoke ``show_error`` on the GUI thread automatically.
+    error_occurred = Signal(str)
+
     def __init__(self, app: QApplication) -> None:
         super().__init__()
+
+        # Wire the thread-safe error signal to the slots on the GUI thread
+        self.error_occurred.connect(self.show_error)
         self._app = app
         self.setWindowTitle("Sputter Automation")
         self.resize(1280, 800)
@@ -180,6 +187,19 @@ class MainWindow(QMainWindow):
         self._status_acq.setMinimumWidth(80)
         self._status_bar.addPermanentWidget(self._status_acq)
 
+        self._status_error = QLabel("")
+        self._status_error.setObjectName("statusError")
+        self._status_error.setStyleSheet(
+            "color: #ff6b6b; font-weight: bold; padding: 0 8px;"
+        )
+        self._status_error.setVisible(False)
+        self._status_bar.addPermanentWidget(self._status_error)
+
+        # Auto-clear timer for error messages
+        self._error_timer = QTimer(self)
+        self._error_timer.setSingleShot(True)
+        self._error_timer.timeout.connect(self.clear_error)
+
     def _refresh_status(self) -> None:
         """Periodically refresh status bar indicators."""
         pass  # wired up later when device manager / engine are connected
@@ -231,6 +251,28 @@ class MainWindow(QMainWindow):
             "deposition processes.</p>"
             "<p>Built with PySide6 and pyqtgraph.</p>",
         )
+
+    def show_error(self, message: str, timeout_ms: int = 20000) -> None:
+        """Display an error message in the status bar.
+
+        The message auto-clears after *timeout_ms* milliseconds.
+        A subsequent call restarts the timer so transient errors
+        don't disappear too quickly.
+        """
+        self._status_error.setText(message)
+        self._status_error.setVisible(True)
+        self._error_timer.stop()
+        if timeout_ms > 0:
+            self._error_timer.start(timeout_ms)
+
+    def clear_error(self) -> None:
+        """Hide and clear the error label."""
+        self._status_error.setText("")
+        self._status_error.setVisible(False)
+
+    def temporary_status(self, message: str, timeout_ms: int = 3000) -> None:
+        """Show a temporary message in the status bar's temporary area."""
+        self._status_bar.showMessage(message, timeout_ms)
 
     # ------------------------------------------------------------------
     # Lifecycle
