@@ -36,6 +36,7 @@ from src.devices.sqm_controller import SQMController
 from src.devices.vcu_controller import VCUController
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
+from src.config import update_device_config
 
 logger = logging.getLogger(__name__)
 
@@ -437,11 +438,19 @@ class DeviceManager:
         """Create a DevicePanel and add it to the dock."""
         num_channels = dev_cfg.get("number_of_sensors", 1)
         dev_type = dev_cfg.get("type", "Unknown")
+        port = dev_cfg.get("port", "")
+        baudrate = dev_cfg.get("baudrate", 9600)
+        available_ports = self.list_available_ports()
         panel = DevicePanel(
             device.device_id,
             device_type=dev_type,
             num_channels=num_channels,
+            port=port,
+            baudrate=baudrate,
+            available_ports=available_ports,
         )
+        panel.port_changed.connect(self._on_panel_port_changed)
+        panel.baudrate_changed.connect(self._on_panel_baudrate_changed)
         area = Qt.LeftDockWidgetArea
         allowedAreas = Qt.LeftDockWidgetArea
         if panel_cfg:
@@ -460,6 +469,33 @@ class DeviceManager:
         dock.setMaximumWidth(340)
         logger.debug("DevicePanel created for %s", device.device_id)
         return panel
+
+    def _on_panel_port_changed(self, device_id: str, new_port: str) -> None:
+        """Update device config and device object when the COM port changes."""
+        device = self._devices.get(device_id)
+        if device is None:
+            return
+        # If connected, disconnect first so we don't hold the old port
+        if device.connected:
+            self.disconnect_device(device_id)
+        # Update the device's in-memory port
+        device._port = new_port
+        # Persist to config
+        update_device_config(self._config, device_id, {"port": new_port})
+        save_config(self._config)
+        logger.info("Port for %s changed to %s", device_id, new_port)
+
+    def _on_panel_baudrate_changed(self, device_id: str, new_baudrate: int) -> None:
+        """Update device config and device object when the baudrate changes."""
+        device = self._devices.get(device_id)
+        if device is None:
+            return
+        if device.connected:
+            self.disconnect_device(device_id)
+        device._baudrate = new_baudrate
+        update_device_config(self._config, device_id, {"baudrate": new_baudrate})
+        save_config(self._config)
+        logger.info("Baudrate for %s changed to %d", device_id, new_baudrate)
 
     def _setup_plots(self) -> None:
         """Create PlotWidget instances from config and wire to DataStore.

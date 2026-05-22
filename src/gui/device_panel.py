@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -73,6 +74,8 @@ class DevicePanel(QWidget):
 
     connect_requested = Signal(str)
     disconnect_requested = Signal(str)
+    port_changed = Signal(str, str)         # device_id, new_port
+    baudrate_changed = Signal(str, int)     # device_id, new_baudrate
     _data_arrived = Signal(str, float, object)
 
     def __init__(
@@ -80,6 +83,9 @@ class DevicePanel(QWidget):
         device_id: str,
         device_type: str = "Unknown",
         num_channels: int = 1,
+        port: str = "",
+        baudrate: int = 9600,
+        available_ports: Optional[list] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -91,14 +97,19 @@ class DevicePanel(QWidget):
         # Per-channel value labels
         self._value_labels: Dict[str, QLabel] = {}
 
-        self._build_ui()
+        self._build_ui(port, baudrate, available_ports or [])
         self._data_arrived.connect(self._on_data_arrived)
 
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
 
-    def _build_ui(self) -> None:
+    # ------------------------------------------------------------------
+    # Baudrate presets
+    # ------------------------------------------------------------------
+    _BAUDRATES = [9600, 19200, 38400, 57600, 115200]
+
+    def _build_ui(self, port: str, baudrate: int, available_ports: list) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
@@ -126,6 +137,28 @@ class DevicePanel(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
+        # ---- Port & Baudrate ----
+        port_layout = QHBoxLayout()
+        port_layout.setSpacing(8)
+
+        self._port_combo = QComboBox()
+        self._port_combo.setMinimumWidth(100)
+        self._populate_ports(available_ports, port)
+        self._port_combo.currentTextChanged.connect(self._on_port_changed)
+        port_layout.addWidget(QLabel("Port:"))
+        port_layout.addWidget(self._port_combo, 1)
+
+        self._baud_combo = QComboBox()
+        for br in self._BAUDRATES:
+            self._baud_combo.addItem(str(br), br)
+        idx = self._baud_combo.findData(baudrate)
+        if idx >= 0:
+            self._baud_combo.setCurrentIndex(idx)
+        self._baud_combo.currentIndexChanged.connect(self._on_baudrate_changed)
+        port_layout.addWidget(QLabel("Baud:"))
+        port_layout.addWidget(self._baud_combo)
+
+        layout.addLayout(port_layout)
 
         # ---- Live values ----
         self._unit_label = QLabel("")
@@ -196,6 +229,44 @@ class DevicePanel(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def update_available_ports(self, ports: list) -> None:
+        """Refresh the COM-port dropdown with a new port list."""
+        current = self._port_combo.currentText()
+        self._populate_ports(ports, current)
+
+    def _populate_ports(self, ports: list, selected: str) -> None:
+        """Fill the port combo with *ports* (list of dicts with 'port' key)."""
+        self._port_combo.blockSignals(True)
+        self._port_combo.clear()
+        for p in ports:
+            port_name = p.get("port", "")
+            desc = p.get("description", "")
+            if desc:
+                self._port_combo.addItem(f"{port_name} ({desc})", port_name)
+            else:
+                self._port_combo.addItem(port_name, port_name)
+        # Ensure selected port is in the list; add it if missing
+        if selected:
+            idx = self._port_combo.findData(selected)
+            if idx >= 0:
+                self._port_combo.setCurrentIndex(idx)
+            else:
+                self._port_combo.insertItem(0, selected, selected)
+                self._port_combo.setCurrentIndex(0)
+        self._port_combo.blockSignals(False)
+
+    def _on_port_changed(self, text: str) -> None:
+        """Slot: COM port dropdown changed."""
+        port = self._port_combo.currentData()
+        if port:
+            self.port_changed.emit(self._device_id, port)
+
+    def _on_baudrate_changed(self, index: int) -> None:
+        """Slot: baudrate dropdown changed."""
+        baud = self._baud_combo.currentData()
+        if baud:
+            self.baudrate_changed.emit(self._device_id, baud)
 
     def push_data(
         self,
