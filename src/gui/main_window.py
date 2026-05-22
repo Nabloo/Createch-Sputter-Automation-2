@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDateTimeEdit,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenuBar,
@@ -17,6 +19,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QStatusBar,
     QToolBar,
+    QToolButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -130,91 +134,189 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _build_toolbar(self) -> None:
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
+
+        # ---- Single toolbar with a two-row container widget ----
         self._toolbar = QToolBar("Main Toolbar")
         self._toolbar.setObjectName("MainToolBar")
         self._toolbar.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, self._toolbar)
 
+        # Container widget with two rows
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        # ---- Row 1: core actions ----
+        row1 = QWidget()
+        row1_layout = QHBoxLayout(row1)
+        row1_layout.setContentsMargins(4, 2, 4, 2)
+        row1_layout.setSpacing(2)
+
         # Placeholder actions – wired up when acquisition is running
         self._start_action = QAction("\u25b6  Start", self)
         self._start_action.setStatusTip("Start data acquisition")
         self._start_action.setEnabled(False)
-        self._toolbar.addAction(self._start_action)
+        start_btn = QPushButton("\u25b6  Start")
+        start_btn.setEnabled(False)
+        start_btn.setFlat(True)
+        start_btn.clicked.connect(self._start_action.trigger)
+        self._start_action.changed.connect(
+            lambda: start_btn.setEnabled(self._start_action.isEnabled())
+        )
+        row1_layout.addWidget(start_btn)
+        self._start_btn = start_btn
 
         self._stop_action = QAction("\u25a0  Stop", self)
         self._stop_action.setStatusTip("Stop data acquisition")
         self._stop_action.setEnabled(False)
-        self._toolbar.addAction(self._stop_action)
+        stop_btn = QPushButton("\u25a0  Stop")
+        stop_btn.setEnabled(False)
+        stop_btn.setFlat(True)
+        stop_btn.clicked.connect(self._stop_action.trigger)
+        self._stop_action.changed.connect(
+            lambda: stop_btn.setEnabled(self._stop_action.isEnabled())
+        )
+        row1_layout.addWidget(stop_btn)
+        self._stop_btn = stop_btn
 
-        self._toolbar.addSeparator()
+        sep1 = QLabel(" ")
+        sep1.setFixedWidth(8)
+        row1_layout.addWidget(sep1)
 
         self._connect_action = QAction("\u26a1  Connect All", self)
         self._connect_action.setStatusTip("Connect to all configured devices")
         self._connect_action.setEnabled(False)
-        self._toolbar.addAction(self._connect_action)
+        conn_btn = QPushButton("\u26a1  Connect All")
+        conn_btn.setEnabled(False)
+        conn_btn.setFlat(True)
+        conn_btn.clicked.connect(self._connect_action.trigger)
+        self._connect_action.changed.connect(
+            lambda: conn_btn.setEnabled(self._connect_action.isEnabled())
+        )
+        row1_layout.addWidget(conn_btn)
+        self._connect_btn = conn_btn
 
         self._disconnect_action = QAction("\u23fb  Disconnect All", self)
         self._disconnect_action.setStatusTip("Disconnect all devices")
         self._disconnect_action.setEnabled(False)
-        self._toolbar.addAction(self._disconnect_action)
+        disc_btn = QPushButton("\u23fb  Disconnect All")
+        disc_btn.setEnabled(False)
+        disc_btn.setFlat(True)
+        disc_btn.clicked.connect(self._disconnect_action.trigger)
+        self._disconnect_action.changed.connect(
+            lambda: disc_btn.setEnabled(self._disconnect_action.isEnabled())
+        )
+        row1_layout.addWidget(disc_btn)
+        self._disconnect_btn = disc_btn
 
-        # ---- Mode toggle (Live / View Log) ----
-        self._toolbar.addSeparator()
+        sep2 = QLabel(" ")
+        sep2.setFixedWidth(8)
+        row1_layout.addWidget(sep2)
 
+        self._add_plot_action = QAction("\ud83d\udcca  Add Plot", self)
+        self._add_plot_action.setStatusTip("Add a new plot widget")
+        self._add_plot_action.setEnabled(False)
+        add_btn = QPushButton("\ud83d\udcca  Add Plot")
+        add_btn.setEnabled(False)
+        add_btn.setFlat(True)
+        add_btn.clicked.connect(self._add_plot_action.trigger)
+        self._add_plot_action.changed.connect(
+            lambda: add_btn.setEnabled(self._add_plot_action.isEnabled())
+        )
+        row1_layout.addWidget(add_btn)
+        self._add_plot_btn = add_btn
+
+        self._clear_all_action = QAction("\u267b  Clear All", self)
+        self._clear_all_action.setStatusTip("Clear data from all plots")
+        self._clear_all_action.setEnabled(False)
+        clear_btn = QPushButton("\u267b  Clear All")
+        clear_btn.setEnabled(False)
+        clear_btn.setFlat(True)
+        clear_btn.clicked.connect(self._clear_all_action.trigger)
+        self._clear_all_action.changed.connect(
+            lambda: clear_btn.setEnabled(self._clear_all_action.isEnabled())
+        )
+        row1_layout.addWidget(clear_btn)
+        self._clear_all_btn = clear_btn
+
+        # History window spinner (applies to all plots)
+        history_label = QLabel("  History:")
+        row1_layout.addWidget(history_label)
+
+        self._history_spin = QSpinBox()
+        self._history_spin.setRange(0, 3600)
+        self._history_spin.setSpecialValueText("All")
+        self._history_spin.setSuffix(" s")
+        self._history_spin.setToolTip("Rolling history window (0 = show everything)")
+        self._history_spin.setMinimumWidth(80)
+        row1_layout.addWidget(self._history_spin)
+
+        row1_layout.addStretch()
+        container_layout.addWidget(row1)
+
+        # ---- Row 2: mode / log controls ----
+        row2 = QWidget()
+        row2_layout = QHBoxLayout(row2)
+        row2_layout.setContentsMargins(4, 2, 4, 2)
+        row2_layout.setSpacing(2)
+
+        # Mode toggle (Live / View Log)
         self._mode_toggle = QPushButton("\u26ab  Live")
         self._mode_toggle.setCheckable(True)
         self._mode_toggle.setToolTip("Switch between live data and log viewer")
-        self._mode_toggle.setMinimumWidth(100)
+        self._mode_toggle.setMinimumWidth(80)
         self._mode_toggle.setStyleSheet(
             "QPushButton { background-color: #2e7d32; color: #ffffff;"
             " border: 1px solid #555; border-radius: 3px; padding: 2px 8px;"
             " font-weight: bold; }"
             "QPushButton:checked { background-color: #e65100; }"
         )
-        self._toolbar.addWidget(self._mode_toggle)
+        row2_layout.addWidget(self._mode_toggle)
 
-        # ---- Log controls (hidden in Live mode) ----
+        # Log controls (hidden in Live mode)
         self._load_btn = QPushButton("\ud83d\udcc2  Load…")
         self._load_btn.setToolTip("Open a CSV log file")
         self._load_btn.setStyleSheet(
             "QPushButton { padding: 2px 8px; }"
         )
-        self._toolbar.addWidget(self._load_btn)
+        row2_layout.addWidget(self._load_btn)
 
         self._file_label = QLabel("No file")
         self._file_label.setMinimumWidth(140)
         self._file_label.setStyleSheet("color: #aaa; padding: 0 4px;")
         self._file_label.setToolTip("Currently loaded log file")
-        self._toolbar.addWidget(self._file_label)
+        row2_layout.addWidget(self._file_label)
 
         from_label = QLabel("From:")
         from_label.setStyleSheet("padding: 0 2px 0 6px;")
-        self._toolbar.addWidget(from_label)
+        row2_layout.addWidget(from_label)
         self._from_dt = QDateTimeEdit()
         self._from_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self._from_dt.setCalendarPopup(True)
         self._from_dt.setMinimumWidth(170)
         self._from_dt.setToolTip("Start of displayed time range")
-        self._toolbar.addWidget(self._from_dt)
+        row2_layout.addWidget(self._from_dt)
 
         to_label = QLabel("To:")
         to_label.setStyleSheet("padding: 0 2px 0 6px;")
-        self._toolbar.addWidget(to_label)
+        row2_layout.addWidget(to_label)
         self._to_dt = QDateTimeEdit()
         self._to_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
         self._to_dt.setCalendarPopup(True)
         self._to_dt.setMinimumWidth(170)
         self._to_dt.setToolTip("End of displayed time range")
-        self._toolbar.addWidget(self._to_dt)
+        row2_layout.addWidget(self._to_dt)
 
         xlabel = QLabel("X-axis:")
         xlabel.setStyleSheet("padding: 0 2px 0 6px;")
-        self._toolbar.addWidget(xlabel)
+        row2_layout.addWidget(xlabel)
         self._xaxis_combo = QComboBox()
         self._xaxis_combo.addItems(["Seconds from start", "HH:MM:SS"])
         self._xaxis_combo.setMinimumWidth(140)
         self._xaxis_combo.setToolTip("X-axis display mode")
-        self._toolbar.addWidget(self._xaxis_combo)
+        row2_layout.addWidget(self._xaxis_combo)
 
         self._log_controls = [
             self._load_btn,
@@ -230,33 +332,14 @@ class MainWindow(QMainWindow):
         for w in self._log_controls:
             w.setVisible(False)
 
-        self._toolbar.addSeparator()
+        sep3 = QLabel(" ")
+        sep3.setFixedWidth(8)
+        row2_layout.addWidget(sep3)
 
-        self._add_plot_action = QAction("\ud83d\udcca  Add Plot", self)
-        self._add_plot_action.setStatusTip("Add a new plot widget")
-        self._add_plot_action.setEnabled(False)
-        self._toolbar.addAction(self._add_plot_action)
+        row2_layout.addStretch()
+        container_layout.addWidget(row2)
 
-        self._toolbar.addSeparator()
-
-        self._clear_all_action = QAction("\u267b  Clear All", self)
-        self._clear_all_action.setStatusTip("Clear data from all plots")
-        self._clear_all_action.setEnabled(False)
-        self._toolbar.addAction(self._clear_all_action)
-
-        self._toolbar.addSeparator()
-
-        # History window spinner (applies to all plots)
-        history_label = QLabel("  History:")
-        self._toolbar.addWidget(history_label)
-
-        self._history_spin = QSpinBox()
-        self._history_spin.setRange(0, 3600)
-        self._history_spin.setSpecialValueText("All")
-        self._history_spin.setSuffix(" s")
-        self._history_spin.setToolTip("Rolling history window (0 = show everything)")
-        self._history_spin.setMinimumWidth(80)
-        self._toolbar.addWidget(self._history_spin)
+        self._toolbar.addWidget(container)
 
     def set_log_controls_visible(self, visible: bool) -> None:
         """Show or hide the log-viewer controls in the toolbar."""
