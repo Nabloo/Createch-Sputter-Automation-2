@@ -6,10 +6,13 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDateTimeEdit,
     QLabel,
     QMainWindow,
     QMenuBar,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QSpinBox,
     QStatusBar,
@@ -155,6 +158,78 @@ class MainWindow(QMainWindow):
         self._disconnect_action.setEnabled(False)
         self._toolbar.addAction(self._disconnect_action)
 
+        # ---- Mode toggle (Live / View Log) ----
+        self._toolbar.addSeparator()
+
+        self._mode_toggle = QPushButton("\u26ab  Live")
+        self._mode_toggle.setCheckable(True)
+        self._mode_toggle.setToolTip("Switch between live data and log viewer")
+        self._mode_toggle.setMinimumWidth(100)
+        self._mode_toggle.setStyleSheet(
+            "QPushButton { background-color: #2e7d32; color: #ffffff;"
+            " border: 1px solid #555; border-radius: 3px; padding: 2px 8px;"
+            " font-weight: bold; }"
+            "QPushButton:checked { background-color: #e65100; }"
+        )
+        self._toolbar.addWidget(self._mode_toggle)
+
+        # ---- Log controls (hidden in Live mode) ----
+        self._load_btn = QPushButton("\ud83d\udcc2  Load…")
+        self._load_btn.setToolTip("Open a CSV log file")
+        self._load_btn.setStyleSheet(
+            "QPushButton { padding: 2px 8px; }"
+        )
+        self._toolbar.addWidget(self._load_btn)
+
+        self._file_label = QLabel("No file")
+        self._file_label.setMinimumWidth(140)
+        self._file_label.setStyleSheet("color: #aaa; padding: 0 4px;")
+        self._file_label.setToolTip("Currently loaded log file")
+        self._toolbar.addWidget(self._file_label)
+
+        from_label = QLabel("From:")
+        from_label.setStyleSheet("padding: 0 2px 0 6px;")
+        self._toolbar.addWidget(from_label)
+        self._from_dt = QDateTimeEdit()
+        self._from_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self._from_dt.setCalendarPopup(True)
+        self._from_dt.setMinimumWidth(170)
+        self._from_dt.setToolTip("Start of displayed time range")
+        self._toolbar.addWidget(self._from_dt)
+
+        to_label = QLabel("To:")
+        to_label.setStyleSheet("padding: 0 2px 0 6px;")
+        self._toolbar.addWidget(to_label)
+        self._to_dt = QDateTimeEdit()
+        self._to_dt.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self._to_dt.setCalendarPopup(True)
+        self._to_dt.setMinimumWidth(170)
+        self._to_dt.setToolTip("End of displayed time range")
+        self._toolbar.addWidget(self._to_dt)
+
+        xlabel = QLabel("X-axis:")
+        xlabel.setStyleSheet("padding: 0 2px 0 6px;")
+        self._toolbar.addWidget(xlabel)
+        self._xaxis_combo = QComboBox()
+        self._xaxis_combo.addItems(["Seconds from start", "HH:MM:SS"])
+        self._xaxis_combo.setMinimumWidth(140)
+        self._xaxis_combo.setToolTip("X-axis display mode")
+        self._toolbar.addWidget(self._xaxis_combo)
+
+        self._log_controls = [
+            self._load_btn,
+            self._file_label,
+            from_label,
+            self._from_dt,
+            to_label,
+            self._to_dt,
+            xlabel,
+            self._xaxis_combo,
+        ]
+        # Hidden by default (live mode)
+        for w in self._log_controls:
+            w.setVisible(False)
+
         self._toolbar.addSeparator()
 
         self._add_plot_action = QAction("\ud83d\udcca  Add Plot", self)
@@ -182,6 +257,11 @@ class MainWindow(QMainWindow):
         self._history_spin.setToolTip("Rolling history window (0 = show everything)")
         self._history_spin.setMinimumWidth(80)
         self._toolbar.addWidget(self._history_spin)
+
+    def set_log_controls_visible(self, visible: bool) -> None:
+        """Show or hide the log-viewer controls in the toolbar."""
+        for w in self._log_controls:
+            w.setVisible(visible)
 
     # ------------------------------------------------------------------
     # Status bar

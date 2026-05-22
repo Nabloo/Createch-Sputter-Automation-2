@@ -13,9 +13,11 @@ Responsibilities:
 """
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QDateTime, Qt, QTimer
+from PySide6.QtWidgets import QFileDialog
 
 try:
     import serial.tools.list_ports as list_ports
@@ -27,11 +29,12 @@ except ImportError:
 from src.acquisition.engine import AcquisitionEngine
 from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config, save_config, set_plot_configs
 from src.data.datastore import DataStore
+from src.data_logging.data_logger import DataLogger
+from src.data_logging.log_reader import LogData, LogFileReader
 from src.devices.base_device import BaseDevice
 from src.devices.vcu_controller import VCUController
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
-from src.data_logging.data_logger import DataLogger
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,15 @@ class DeviceManager:
 
         # CSV data logger (subscribes to DataStore for automated logging)
         self._data_logger = DataLogger(config, self._store)
+
+        # ---- Log-viewer state ---------------------------------------------------
+        self._view_mode_live = True
+        self._log_reader = LogFileReader(self)
+        self._log_data: Optional[LogData] = None
+        self._log_filepath: str = ""
+        # Wire log-reader signals
+        self._log_reader.loaded.connect(self._on_log_loaded)
+        self._log_reader.error_occurred.connect(self._window.error_occurred.emit)
 
         # Balance dock sizes after the event loop starts (when heights are known)
         QTimer.singleShot(0, self._balance_docks)
@@ -243,6 +255,120 @@ class DeviceManager:
         except Exception:
             pass
         return None
+
+    # ------------------------------------------------------------------
+    # Log-viewer mode orchestration (T4)
+    # ------------------------------------------------------------------
+
+    def set_view_mode(self, live: bool) -> None:
+        """Switch the application between Live and View Log mode.
+
+        Parameters
+        ----------
+        live:
+            ``True`` → Live mode (plots show real-time data).
+            ``False`` → View Log mode (plots show CSV log data).
+        """
+        if self._view_mode_live == live:
+            return  # no-op
+
+        self._view_mode_live = live
+        w = self._window
+
+        if not live:
+            # ---- Switch to View Log mode ----
+            w._mode_toggle.blockSignals(True)
+            w._mode_toggle.setChecked(True)
+            w._mode_toggle.setText("\u26ab  View Log")
+            w._mode_toggle.blockSignals(False)
+            w.set_log_controls_visible(True)
+
+            # If a log file was previously loaded, display it
+            if self._log_data is not None:
+                self._apply_log_data_to_plots()
+        else:
+            # ---- Switch to Live mode ----
+            w._mode_toggle.blockSignals(True)
+            w._mode_toggle.setChecked(False)
+            w._mode_toggle.setText("\u26ab  Live")
+            w._mode_toggle.blockSignals(False)
+            w.set_log_controls_visible(False)
+
+            # Restore live rendering on all plots
+            for plot in self._plots.values():
+                plot.clear_log_data()
+
+        logger.info("View mode switched to %s", "Live" if live else "View Log")
+
+    def _load_log_file(self, filepath: str) -> None:
+        """Start loading a CSV log file in a worker thread."""
+        self._log_filepath = filepath
+        self._window.temporary_status(f"Loading {os.path.basename(filepath)} …")
+        self._log_reader.load(filepath)
+
+    def _on_log_loaded(self, log_data: LogData) -> None:
+        """Slot: worker thread finished parsing the CSV."""
+        self._log_data = log_data
+        w = self._window
+        basename = os.path.basename(self._log_filepath)
+        w._file_label.setText(basename)
+        w._file_label.setStyleSheet("color: #66bb6a; padding: 0 4px;")
+
+        # Set From/To to the full time range of the log.
+        # Strip timezone so comparisons in load_log_data work
+        # regardless of timezone-aware vs naive datetime mismatch.
+        if log_data.timestamps:
+            t0 = log_data.timestamps[0].replace(tzinfo=None)
+            t1 = log_data.timestamps[-1].replace(tzinfo=None)
+            from_qdt = QDateTime(t0.year, t0.month, t0.day,
+                                 t0.hour, t0.minute, t0.second)
+            to_qdt = QDateTime(t1.year, t1.month, t1.day,
+                               t1.hour, t1.minute, t1.second)
+            w._from_dt.blockSignals(True)
+            w._to_dt.blockSignals(True)
+            w._from_dt.setDateTime(from_qdt)
+            w._to_dt.setDateTime(to_qdt)
+            w._from_dt.blockSignals(False)
+            w._to_dt.blockSignals(False)
+
+        self._apply_log_data_to_plots()
+        self._window.temporary_status(
+            f"Loaded {basename} — {len(log_data.timestamps)} rows"
+        )
+        logger.info(
+            "Log file loaded: %s (%d rows, %d columns)",
+            basename, len(log_data.timestamps), len(log_data.values),
+        )
+
+    def _apply_log_data_to_plots(self) -> None:
+        """Render the currently-loaded LogData on every PlotWidget."""
+        if self._log_data is None:
+            return
+
+        w = self._window
+        from_qdt = w._from_dt.dateTime()
+        to_qdt = w._to_dt.dateTime()
+        # Strip timezone to match the naive datetimes in LogData (we
+        # already stripped timezone in _on_log_loaded when creating
+        # the QDateTime bounds).
+        t_start = from_qdt.toPython().replace(tzinfo=None)
+        t_end = to_qdt.toPython().replace(tzinfo=None)
+
+        x_axis_mode = "relative" if w._xaxis_combo.currentIndex() == 0 else "absolute"
+
+        for plot in self._plots.values():
+            plot.load_log_data(
+                self._log_data,
+                t_range_start=t_start,
+                t_range_end=t_end,
+                x_axis_mode=x_axis_mode,
+            )
+
+        logger.debug(
+            "Applied log data to %d plots (range %s … %s, %s)",
+            len(self._plots), from_qdt.toString("yyyy-MM-dd HH:mm"),
+            to_qdt.toString("yyyy-MM-dd HH:mm"), x_axis_mode,
+        )
 
     # ------------------------------------------------------------------
     # GUI wiring (internal)
@@ -594,6 +720,35 @@ class DeviceManager:
         if first_plot is not None:
             w._history_spin.setValue(int(first_plot.history_seconds))
         w._history_spin.valueChanged.connect(self._on_history_changed)
+
+        # ---- Log viewer controls ----
+        w._mode_toggle.toggled.connect(lambda checked: self.set_view_mode(not checked))
+        w._load_btn.clicked.connect(self._on_load_clicked)
+        w._xaxis_combo.currentIndexChanged.connect(self._on_xaxis_changed)
+        # Use editingFinished to avoid re-rendering on every keystroke
+        w._from_dt.editingFinished.connect(self._on_time_range_changed)
+        w._to_dt.editingFinished.connect(self._on_time_range_changed)
+
+    def _on_load_clicked(self) -> None:
+        """Open a QFileDialog and start loading the selected CSV."""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self._window,
+            "Open Log File",
+            "logs",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+        if filepath:
+            self._load_log_file(filepath)
+
+    def _on_xaxis_changed(self, _index: int) -> None:
+        """X-axis mode combo changed — re-render log data."""
+        if not self._view_mode_live and self._log_data is not None:
+            self._apply_log_data_to_plots()
+
+    def _on_time_range_changed(self) -> None:
+        """From/To datetime changed — re-render log data."""
+        if not self._view_mode_live and self._log_data is not None:
+            self._apply_log_data_to_plots()
 
     def _wire_status_timer(self) -> None:
         """Wire MainWindow's existing status refresh timer to our method."""
