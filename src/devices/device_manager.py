@@ -516,6 +516,10 @@ class DeviceManager:
             if visibility:
                 plot.apply_visibility(visibility)
 
+            # Restore y-axis log scale
+            if pc.get("y_log", False):
+                plot.set_y_log(True)
+
             # Wire remove button
             plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
             # Persist state changes (device switch, channel config, etc.)
@@ -663,6 +667,7 @@ class DeviceManager:
                 "colours": all_colours,
                 "visibility": visibility,
                 "history_seconds": plot.history_seconds,
+                "y_log": plot.y_log,
             })
         set_plot_configs(self._config, plots_data)
         save_config(self._config)

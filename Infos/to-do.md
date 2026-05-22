@@ -6,3 +6,6 @@
 - when switching back to live mode during a measurement from log mode show the full measurment range again
 - make add plot more robust. It should always just add to the right side at the bottom
 - Add reset button under view which loads a default config
+
+## loading broken again?
+- happend in the implementation of the new device. Commit "No more unattached plots" was fine

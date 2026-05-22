@@ -115,6 +115,7 @@ class PlotWidget(QWidget):
         # channel_name → list of PlotDataItem segments (one per gap-free block)
         self._log_curves: Dict[str, List[pg.PlotDataItem]] = {}
         self._x_axis_mode: str = "relative"  # "relative" | "absolute"
+        self._y_log: bool = False  # y-axis log scale
 
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
@@ -154,6 +155,12 @@ class PlotWidget(QWidget):
         self._auto_btn = QPushButton("Auto")
         self._auto_btn.setToolTip("Reset auto-scaling")
         toolbar.addWidget(self._auto_btn)
+
+        self._log_btn = QPushButton("Log")
+        self._log_btn.setToolTip("Toggle y-axis logarithmic scale")
+        self._log_btn.setCheckable(True)
+        self._log_btn.clicked.connect(self._on_toggle_y_log)
+        toolbar.addWidget(self._log_btn)
 
         toolbar.addStretch()
 
@@ -454,8 +461,33 @@ class PlotWidget(QWidget):
         if t0 is not None and t0[0] is not None and self._t0 is None:
             self._t0 = t0[0]
 
+    def set_y_log(self, enabled: bool) -> None:
+        """Enable or disable logarithmic y-axis scale."""
+        self._y_log = enabled
+        self._plot.getPlotItem().setLogMode(y=enabled)
+        self._log_btn.blockSignals(True)
+        self._log_btn.setChecked(enabled)
+        self._log_btn.setText("Log" if enabled else "Lin")
+        self._log_btn.blockSignals(False)
+        self._log_btn.setToolTip(
+            "Y-axis is logarithmic" if enabled else "Y-axis is linear (click to toggle)"
+        )
+        if enabled:
+            # Auto-range with log scale — must re-enable to recalculate
+            self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+    @property
+    def y_log(self) -> bool:
+        return self._y_log
+
+    def _on_toggle_y_log(self, checked: bool) -> None:
+        """Toggle the y-axis log scale."""
+        self.set_y_log(checked)
+        self.state_changed.emit()
+
     def set_dark_mode(self, dark: bool) -> None:
         """Update plot styling to match the application theme."""
+
         if dark:
             self._plot.setBackground("#1e1e1e")
             grid_alpha = 0.3
