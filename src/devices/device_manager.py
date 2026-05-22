@@ -95,7 +95,7 @@ class DeviceManager:
 
         # ---- Log-viewer state ---------------------------------------------------
         self._view_mode_live = True
-        self._log_reader = LogFileReader(self)
+        self._log_reader = LogFileReader()
         self._log_data: Optional[LogData] = None
         self._log_filepath: str = ""
         # Wire log-reader signals
