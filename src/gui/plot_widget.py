@@ -1,11 +1,22 @@
-"""Real-time pyqtgraph plot widget with configurable channels and device selection."""
+"""Real-time pyqtgraph plot widget with configurable channels and device selection.
+
+Supports two rendering modes:
+
+- **Live** (default): buffers data from ``push_data`` into per-channel deques,
+  renders with a rolling history window.
+- **Log viewer**: displays pre-loaded CSV log data via ``load_log_data()``.
+  Live data is paused (``_log_mode=True``) and gap detection >60 s splits
+  curves into separate ``PlotDataItem`` segments.
+"""
 
 import logging
+import math
 import time
 from collections import deque
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -17,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.data_logging.log_reader import LogData
 from src.gui.plot_config_dialog import PlotConfigDialog
 
 logger = logging.getLogger(__name__)
@@ -26,6 +38,33 @@ TRACE_COLOURS = [
     "#cc5de8", "#ff922b", "#20c997", "#f06595",
     "#748ffc", "#94d82d", "#ff8787", "#4dabf7",
 ]
+
+_GAP_THRESHOLD_S = 60.0
+
+
+def _split_into_segments(
+    xs: List[float],
+    ys: List[float],
+    gap_threshold_s: float = _GAP_THRESHOLD_S,
+) -> List[Tuple[List[float], List[float]]]:
+    """Split (x, y) series at gaps larger than *gap_threshold_s*.
+
+    Returns a list of ``(seg_x, seg_y)`` tuples, one per contiguous block.
+    An empty input returns an empty list.
+    """
+    if not xs:
+        return []
+    segments: List[Tuple[List[float], List[float]]] = []
+    seg_x, seg_y = [xs[0]], [ys[0]]
+    for i in range(1, len(xs)):
+        if xs[i] - xs[i - 1] > gap_threshold_s:
+            segments.append((seg_x, seg_y))
+            seg_x, seg_y = [xs[i]], [ys[i]]
+        else:
+            seg_x.append(xs[i])
+            seg_y.append(ys[i])
+    segments.append((seg_x, seg_y))
+    return segments
 
 
 class PlotWidget(QWidget):
@@ -67,6 +106,15 @@ class PlotWidget(QWidget):
         self._channels: Dict[str, Dict[str, Any]] = {}
         self._buffers: Dict[str, deque] = {}
         self._curves: Dict[str, pg.PlotDataItem] = {}
+
+        # ---- Log-viewer mode -------------------------------------------------
+        self._log_mode: bool = False
+        # channel_name → (xs_list, ys_list) — pre-built x/y for the current
+        # time range.  None means "no data for this channel".
+        self._log_data_cache: Dict[str, Tuple[List[float], List[float]]] = {}
+        # channel_name → list of PlotDataItem segments (one per gap-free block)
+        self._log_curves: Dict[str, List[pg.PlotDataItem]] = {}
+        self._x_axis_mode: str = "relative"  # "relative" | "absolute"
 
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
@@ -185,7 +233,8 @@ class PlotWidget(QWidget):
         for name, colour in zip(channels, colours):
             if name in self._channels:
                 self._channels[name]["colour"] = colour
-                self._curves[name].setPen(pg.mkPen(color=colour, width=2))
+                if name in self._curves:
+                    self._curves[name].setPen(pg.mkPen(color=colour, width=2))
             else:
                 self._add_channel(name, colour)
 
@@ -226,6 +275,7 @@ class PlotWidget(QWidget):
             buf.clear()
         for curve in self._curves.values():
             curve.setData([], [])
+        self._clear_log_curves()
         logger.debug("PlotWidget[%s]: cleared", self._device_id)
 
     def set_history_seconds(self, seconds: float) -> None:
@@ -256,6 +306,114 @@ class PlotWidget(QWidget):
             history[ch] = store.get_history(device_id, ch)
         if any(history.values()):
             self.load_history(history)
+
+    # ------------------------------------------------------------------
+    # Log-viewer mode (T2) — replace live data with CSV log data
+    # ------------------------------------------------------------------
+
+    @property
+    def log_mode(self) -> bool:
+        """``True`` when the plot is displaying CSV log data."""
+        return self._log_mode
+
+    @property
+    def x_axis_mode(self) -> str:
+        """Current x-axis mode: ``"relative"`` or ``"absolute"``."""
+        return self._x_axis_mode
+
+    def load_log_data(
+        self,
+        log_data: LogData,
+        t_range_start: datetime,
+        t_range_end: datetime,
+        x_axis_mode: str = "relative",
+    ) -> None:
+        """Switch to log-viewer mode and display CSV data.
+
+        Parameters
+        ----------
+        log_data:
+            Parsed CSV log file (from ``LogFileReader.read()``).
+        t_range_start / t_range_end:
+            Only data points within this time window are displayed.
+        x_axis_mode:
+            ``"relative"`` → seconds from *t_range_start* (label ``"Time (s)"``).
+            ``"absolute"`` → Unix epoch seconds (label ``"Time"``).
+        """
+        self._log_mode = True
+        self._clear_log_curves()
+        self._log_data_cache.clear()
+        # Clear live curves from the screen
+        for curve in self._curves.values():
+            curve.setData([], [])
+        for buf in self._buffers.values():
+            buf.clear()
+
+        timestamps = log_data.timestamps
+
+        # ---------- filter to the requested time window ----------
+        indices = [
+            i for i, t in enumerate(timestamps) if t_range_start <= t <= t_range_end
+        ]
+        if not indices:
+            # Nothing in range — all channels will show empty
+            for ch_name in self._channels:
+                self._log_data_cache[ch_name] = ([], [])
+                self._render_log_channel(ch_name)
+            self._update_x_axis_label(x_axis_mode)
+            self._x_axis_mode = x_axis_mode
+            self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+            return
+
+        filtered_ts = [timestamps[i] for i in indices]
+
+        # ---------- convert timestamps to numeric x-values ----------
+        if x_axis_mode == "absolute":
+            xs = [t.timestamp() for t in filtered_ts]
+        else:
+            xs = [(t - t_range_start).total_seconds() for t in filtered_ts]
+
+        # ---------- extract & render each channel ----------
+        for ch_name in self._channels:
+            col_name = self._find_log_column(log_data, ch_name)
+            if col_name is None:
+                self._log_data_cache[ch_name] = ([], [])
+            else:
+                ys = [log_data.values[col_name][i] for i in indices]
+                # Drop NaN entries so gap detection works cleanly
+                valid = [(x, y) for x, y in zip(xs, ys) if not math.isnan(y)]
+                clean_xs = [v[0] for v in valid] if valid else []
+                clean_ys = [v[1] for v in valid] if valid else []
+                self._log_data_cache[ch_name] = (clean_xs, clean_ys)
+            self._render_log_channel(ch_name)
+
+        self._update_x_axis_label(x_axis_mode)
+        self._x_axis_mode = x_axis_mode
+        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        logger.info(
+            "PlotWidget[%s]: loaded log %s — %d points in range [%s … %s]",
+            self._device_id,
+            log_data.filepath,
+            len(filtered_ts),
+            t_range_start.isoformat(),
+            t_range_end.isoformat(),
+        )
+
+    def clear_log_data(self) -> None:
+        """Exit log-viewer mode and resume live data buffering."""
+        self._log_mode = False
+        self._clear_log_curves()
+        self._log_data_cache.clear()
+        # Clear any rendered data from the screen
+        for curve in self._curves.values():
+            curve.setData([], [])
+        self._plot.setLabel("bottom", "Time (s)")
+        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        logger.debug("PlotWidget[%s]: switched back to live mode", self._device_id)
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
     @property
     def device_id(self) -> str:
@@ -314,13 +472,16 @@ class PlotWidget(QWidget):
         if cfg is None:
             return
         cfg["visible"] = visible
-        curve = self._curves.get(name)
-        if curve is None:
-            return
-        if visible:
-            self._update_curve(name)
+        if self._log_mode:
+            self._render_log_channel(name)
         else:
-            curve.setData([], [])
+            curve = self._curves.get(name)
+            if curve is None:
+                return
+            if visible:
+                self._update_curve(name)
+            else:
+                curve.setData([], [])
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
 
@@ -329,14 +490,18 @@ class PlotWidget(QWidget):
         for ch_name, vis in visibility.items():
             if ch_name in self._channels:
                 self._channels[ch_name]["visible"] = vis
-        for ch_name, cfg in self._channels.items():
-            curve = self._curves.get(ch_name)
-            if curve is None:
-                continue
-            if cfg.get("visible", True):
-                self._update_curve(ch_name)
-            else:
-                curve.setData([], [])
+        if self._log_mode:
+            for ch_name in self._channels:
+                self._render_log_channel(ch_name)
+        else:
+            for ch_name, cfg in self._channels.items():
+                curve = self._curves.get(ch_name)
+                if curve is None:
+                    continue
+                if cfg.get("visible", True):
+                    self._update_curve(ch_name)
+                else:
+                    curve.setData([], [])
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     @property
@@ -393,7 +558,14 @@ class PlotWidget(QWidget):
     ) -> None:
         """Slot: runs in GUI thread.  Buffer data for ALL channels (even hidden),
         but only render visible curves.  This way re-enabling a channel shows
-        its full history."""
+        its full history.
+
+        In log-viewer mode this method returns immediately — CSV data is
+        displayed instead of live measurements.
+        """
+        if self._log_mode:
+            return
+
         if self._t0 is None:
             self._t0 = ts_float
             # Only write the shared t0 once — the first-ever data point across
@@ -447,17 +619,22 @@ class PlotWidget(QWidget):
                             pg.mkPen(color=new_colour, width=2)
                         )
 
-            # Hide/show curves based on new visibility.
-            # Hidden curves get cleared from the screen but the buffer
-            # is preserved so re-enabling shows all historical data.
-            for name, cfg in self._channels.items():
-                curve = self._curves.get(name)
-                if curve is None:
-                    continue
-                if cfg.get("visible", True):
-                    self._update_curve(name)
-                else:
-                    curve.setData([], [])
+            if self._log_mode:
+                # Re-render all channels so colour/visibility changes take effect
+                for name in self._channels:
+                    self._render_log_channel(name)
+            else:
+                # Hide/show curves based on new visibility.
+                # Hidden curves get cleared from the screen but the buffer
+                # is preserved so re-enabling shows all historical data.
+                for name, cfg in self._channels.items():
+                    curve = self._curves.get(name)
+                    if curve is None:
+                        continue
+                    if cfg.get("visible", True):
+                        self._update_curve(name)
+                    else:
+                        curve.setData([], [])
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
             self.state_changed.emit()
 
@@ -473,6 +650,8 @@ class PlotWidget(QWidget):
             buf.clear()
         for curve in self._curves.values():
             curve.setData([], [])
+        self._clear_log_curves()
+        self._log_data_cache.clear()
         self._plot.setLabel("left", "Value")
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
@@ -517,23 +696,23 @@ class PlotWidget(QWidget):
         )
         self._curves[name] = curve
 
-    def _update_symbols(self):
+    def _update_symbols(self, curve: pg.PlotDataItem) -> None:
+        """Hide dot symbols when data density exceeds ~1 dot per 2 pixels."""
         view_range = self._plot.viewRange()  # [[xmin, xmax], [ymin, ymax]]
-        x_span = view_range[0][1] - view_range[0][0]
-        pixel_width = self._plot.width()
-
-        points_in_view = np.sum(
-            (curve.xData >= view_range[0][0]) &
-            (curve.xData <= view_range[0][1])
-        ) if curve.xData is not None else 0
-
-        dots_per_pixel = points_in_view / pixel_width
-
-        if dots_per_pixel > 0.5:  # more than 1 dot per 2 pixels → hide symbols
+        x_range = view_range[0]
+        if x_range[1] <= x_range[0]:
+            return
+        pixel_width = max(self._plot.width(), 1)
+        x_data = curve.xData
+        if x_data is None or len(x_data) == 0:
+            return
+        points_in_view = int(np.sum(
+            (x_data >= x_range[0]) & (x_data <= x_range[1])
+        ))
+        if points_in_view / pixel_width > 0.5:
             curve.setSymbol(None)
         else:
             curve.setSymbol('o')
-
 
     def _remove_channel(self, name: str) -> None:
         self._channels.pop(name, None)
@@ -541,6 +720,9 @@ class PlotWidget(QWidget):
         curve = self._curves.pop(name, None)
         if curve is not None:
             self._plot.removeItem(curve)
+        # Clean up log-viewer curves for this channel as well
+        for log_curve in self._log_curves.pop(name, []):
+            self._plot.removeItem(log_curve)
 
     def _update_curve(self, channel_name: str) -> None:
         curve = self._curves.get(channel_name)
@@ -552,7 +734,7 @@ class PlotWidget(QWidget):
             return
         xs, ys = zip(*buf) if buf else ([], [])
         curve.setData(list(xs), list(ys))
-        self._update_symbols()
+        self._update_symbols(curve)
 
     def _trim_buffers(self) -> None:
         if self._history_seconds <= 0 or self._t0 is None:
@@ -574,3 +756,82 @@ class PlotWidget(QWidget):
                 self._plot.setLabel("left", f"Pressure ({unit})")
                 self._y_label_set = True
                 return
+
+    # ------------------------------------------------------------------
+    # Log-viewer helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_log_column(
+        log_data: LogData, channel_name: str,
+    ) -> Optional[str]:
+        """Find the CSV column that corresponds to *channel_name*.
+
+        Matching is done by prefix: ``ch1_pressure`` matches
+        ``ch1_pressure [mbar]`` or ``ch1_pressure``.
+        Returns ``None`` when the channel has no counterpart in the log.
+        """
+        for header in log_data.headers:
+            if header == channel_name:
+                return header
+            if header.startswith(channel_name + " [") or header.startswith(channel_name + " "):
+                return header
+        return None
+
+    def _render_log_channel(self, name: str) -> None:
+        """Create or replace segmented PlotDataItem curves for *name*.
+
+        Reads the pre-built (xs, ys) from ``_log_data_cache``, splits
+        at gaps >60 s, and adds one ``PlotDataItem`` per contiguous
+        segment.  The first segment carries the channel ``name`` (for
+        the legend); subsequent segments are anonymous.
+        """
+        # Remove any previous log curves for this channel
+        for curve in self._log_curves.pop(name, []):
+            self._plot.removeItem(curve)
+
+        xs, ys = self._log_data_cache.get(name, ([], []))
+        if not xs:
+            return
+
+        cfg = self._channels.get(name, {})
+        colour = cfg.get("colour", "#ffffff")
+        visible = cfg.get("visible", True)
+
+        segments = _split_into_segments(xs, ys)
+        curves: List[pg.PlotDataItem] = []
+        for i, (seg_x, seg_y) in enumerate(segments):
+            if not seg_x:
+                continue
+            curve = self._plot.plot(
+                list(seg_x),
+                list(seg_y),
+                pen=pg.mkPen(color=colour, width=2),
+                name=name if i == 0 else None,
+                symbol="o",
+                symbolSize=4,
+                autoDownsample=True,
+            )
+            if not visible:
+                curve.setData([], [])
+            curves.append(curve)
+
+        self._log_curves[name] = curves
+
+        # Apply dot-hiding (same as live-mode _update_curve does)
+        for curve in curves:
+            self._update_symbols(curve)
+
+    def _clear_log_curves(self) -> None:
+        """Remove all log-viewer PlotDataItem segments from the plot."""
+        for curves in self._log_curves.values():
+            for curve in curves:
+                self._plot.removeItem(curve)
+        self._log_curves.clear()
+
+    def _update_x_axis_label(self, mode: str) -> None:
+        """Set the x-axis label based on the current mode."""
+        if mode == "absolute":
+            self._plot.setLabel("bottom", "Time")
+        else:
+            self._plot.setLabel("bottom", "Time (s)")

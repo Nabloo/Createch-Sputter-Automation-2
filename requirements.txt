@@ -1,3 +1,4 @@
+numpy
 PySide6>=6.5.0
 pyqtgraph>=0.13.0
 pyserial>=3.5
