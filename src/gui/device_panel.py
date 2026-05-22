@@ -105,7 +105,6 @@ class DevicePanel(QWidget):
 
         # ---- Header ----
         header = QHBoxLayout()
-        header.setSpacing(8)
 
         self._indicator = ConnectionIndicator()
         header.addWidget(self._indicator)
@@ -127,18 +126,13 @@ class DevicePanel(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        # ---- Separator ----
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color: #3c3c3e;")
-        layout.addWidget(sep)
 
         # ---- Live values ----
         self._unit_label = QLabel("")
         self._unit_label.setStyleSheet("color: #888; font-size: 12px;")
         values_group = QGroupBox()
         values_group.setLayout(QVBoxLayout())
-        values_group.layout().setContentsMargins(0, 4, 0, 0)
+        values_group.layout().setContentsMargins(0, 0, 0, 0)
 
         values_layout = QVBoxLayout()
         values_layout.setSpacing(4)
@@ -164,18 +158,6 @@ class DevicePanel(QWidget):
         values_group.layout().addLayout(values_layout)
 
         layout.addWidget(values_group)
-
-        # ---- Device info (collapsible placeholder) ----
-        self._info_group = QGroupBox("Device Info")
-        info_layout = QFormLayout(self._info_group)
-
-        self._sensor_label = QLabel("--")
-        info_layout.addRow("Sensor:", self._sensor_label)
-
-        self._firmware_label = QLabel("--")
-        info_layout.addRow("Firmware:", self._firmware_label)
-
-        layout.addWidget(self._info_group)
 
         # ---- Controls ----
         controls = QHBoxLayout()
@@ -243,16 +225,6 @@ class DevicePanel(QWidget):
             self._connect_btn.setEnabled(True)
             self._disconnect_btn.setEnabled(False)
 
-    def set_device_info(
-        self,
-        sensor_name: str = "",
-        firmware: str = "",
-    ) -> None:
-        """Update the device info section."""
-        if sensor_name:
-            self._sensor_label.setText(sensor_name)
-        if firmware:
-            self._firmware_label.setText(firmware)
 
     @property
     def device_id(self) -> str:

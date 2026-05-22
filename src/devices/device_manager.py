@@ -177,11 +177,6 @@ class DeviceManager:
         panel = self._panels.get(device_id)
         if panel:
             panel.set_connected(ok)
-            if ok and device.sensor_name != "Unknown":  # type: ignore[attr-defined]
-                panel.set_device_info(
-                    sensor_name=device.sensor_name,  # type: ignore[attr-defined]
-                    firmware=device.firmware_version or "",  # type: ignore[attr-defined]
-                )
         self._refresh_status()
         return ok
 
