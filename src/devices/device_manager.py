@@ -432,10 +432,7 @@ class DeviceManager:
         panel_cfg: Optional[Dict[str, Any]],
     ) -> Optional[DevicePanel]:
         """Create a DevicePanel and add it to the dock."""
-        num_channels = dev_cfg.get(
-            "number of pressure sensors",
-            dev_cfg.get("number_of_sensors", 1),
-        )
+        num_channels = dev_cfg.get("number_of_sensors", 1)
         dev_type = dev_cfg.get("type", "Unknown")
         panel = DevicePanel(
             device.device_id,
@@ -483,10 +480,7 @@ class DeviceManager:
                 if dev:
                     all_channels = list(dev.channels)
                 else:
-                    num_sensors = dev_cfg.get(
-                        "number of pressure sensors",
-                        dev_cfg.get("number_of_sensors", 1),
-                    )
+                    num_sensors = dev_cfg.get("number_of_sensors", 1)
                     all_channels = [
                         f"ch{i}_pressure" for i in range(1, num_sensors + 1)
                     ]

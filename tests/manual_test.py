@@ -26,7 +26,7 @@ def create_device() -> VCUController:
         "baudrate": VCU_BAUDRATE,
         "address": VCU_ADDRESS,
         "timeout": 1.0,
-        "number of pressure sensors": 3,
+        "number_of_sensors": 3,
     })
 
 def print_measurement(device_id, timestamp, data):
