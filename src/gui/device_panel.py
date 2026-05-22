@@ -83,12 +83,17 @@ class DevicePanel(QWidget):
         device_id: str,
         device_type: str = "Unknown",
         num_channels: int = 1,
+        status_channels=None,
         port: str = "",
         baudrate: int = 9600,
         available_ports: Optional[list] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
+        if status_channels is None:
+            self._status_channels = []
+        else:
+            self._status_channels = status_channels
         self._device_id = device_id
         self._device_type = device_type
         self._num_channels = num_channels
@@ -161,30 +166,28 @@ class DevicePanel(QWidget):
         layout.addLayout(port_layout)
 
         # ---- Live values ----
-        self._unit_label = QLabel("")
-        self._unit_label.setStyleSheet("color: #888; font-size: 12px;")
         values_group = QGroupBox()
         values_group.setLayout(QVBoxLayout())
         values_group.layout().setContentsMargins(0, 0, 0, 0)
 
         values_layout = QVBoxLayout()
         values_layout.setSpacing(4)
+        channel_stylesheet = "font-size: 16px; font-weight: bold; font-family: monospace;"
 
         for ch in range(1, self._num_channels + 1):
-            ch_box = QGroupBox(f"Channel {ch}")
+            ch_box = QGroupBox(f"Sensor {ch}")
             ch_form = QFormLayout(ch_box)
             ch_form.setSpacing(4)
-
-            pressure_label = QLabel("--")
-            pressure_label.setStyleSheet(
-                "font-size: 16px; font-weight: bold; font-family: monospace;"
-            )
-            ch_form.addRow("Pressure:", pressure_label)
-            self._value_labels[f"ch{ch}_pressure"] = pressure_label
-
-            status_label = QLabel("--")
-            ch_form.addRow("Status:", status_label)
-            self._value_labels[f"ch{ch}_status"] = status_label
+            prefix = f"ch{ch}_"
+            for channel in self._status_channels:
+                if not channel.startswith(prefix):
+                    continue
+                channel_label = QLabel("--")
+                channel_label.setStyleSheet(channel_stylesheet)
+                # Strip the prefix for a cleaner display name
+                display_name = channel[len(prefix):].replace("_", " ").title()
+                ch_form.addRow(f"{display_name}:", channel_label)
+                self._value_labels[channel] = channel_label
 
             values_layout.addWidget(ch_box)
 
@@ -318,30 +321,21 @@ class DevicePanel(QWidget):
     def _update_values(self, data: Dict[str, Any]) -> None:
         """Parse measurement data and update value labels.
 
-        Handles VCU-style nested dicts: {1: {pressure, status_code, ...}, 2: ...}
+        Handles both:
+        - VCU-style nested dicts: {1: {pressure: ..., status_code: ..., ...}, 2: ...}
+        - SQM-style flat dicts:  {"ch1_rate": ..., "ch1_thickness": ..., ...}
+
+        Nested dicts are flattened to channel keys ("ch1_pressure", "ch1_status_code", …)
+        before label lookup, so they work with labels named after ``device.status_channels``.
         """
+        # Flatten nested dicts (VCU style) to flat channel-key format
         if data and all(isinstance(v, dict) for v in data.values()):
+            flat: Dict[str, Any] = {}
             for ch_key, ch_data in data.items():
-                if not isinstance(ch_data, dict):
-                    continue
-                pressure = ch_data.get("pressure")
-                if pressure is not None and isinstance(pressure, (int, float)):
-                    lbl = self._value_labels.get(f"ch{ch_key}_pressure")
-                    if lbl:
-                        lbl.setText(f"{pressure:.4e}")
-
-                status_text = ch_data.get("status_text", "")
-                status_code = ch_data.get("status_code", 0)
-                lbl = self._value_labels.get(f"ch{ch_key}_status")
-                if lbl:
-                    colour = "#51cf66" if status_code == 0 else "#ffd43b"
-                    lbl.setText(status_text)
-                    lbl.setStyleSheet(f"color: {colour};")
-
-                unit = ch_data.get("unit", "")
-                if unit and self._unit_label.text() != unit:
-                    self._unit_label.setText(unit)
-            return
+                if isinstance(ch_data, dict):
+                    for field, value in ch_data.items():
+                        flat[f"ch{ch_key}_{field}"] = value
+            data = flat
 
         for key, value in data.items():
             lbl = self._value_labels.get(key)

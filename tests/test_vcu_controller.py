@@ -27,8 +27,21 @@ class TestVCUControllerProperties(unittest.TestCase):
         dev = VCUController(cfg)
         self.assertEqual(dev.device_id, "VCU-5")
 
-    def test_channels(self):
-        self.assertEqual(self.device.channels, ["pressure", "status_code", "status_text"])
+    def test_plot_channels(self):
+        self.assertEqual(self.device.plot_channels, ["ch1_pressure"])
+
+    def test_status_channels(self):
+        self.assertEqual(self.device.status_channels, ["ch1_pressure", "ch1_status_code", "ch1_status_text"])
+
+    def test_multi_sensor_channels(self):
+        cfg = dict(self.config, number_of_sensors=2)
+        dev = VCUController(cfg)
+        self.assertEqual(dev.plot_channels, ["ch1_pressure", "ch2_pressure"])
+        self.assertEqual(
+            dev.status_channels,
+            ["ch1_pressure", "ch1_status_code", "ch1_status_text",
+             "ch2_pressure", "ch2_status_code", "ch2_status_text"],
+        )
 
     def test_address_property(self):
         self.assertEqual(self.device.address, 0)

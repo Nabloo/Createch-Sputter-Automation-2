@@ -117,12 +117,17 @@ class TestVCUHardwareReadOnly(unittest.TestCase):
         self.assertIn("setpoint_active", result)
         self.assertIsInstance(result["setpoint_active"], bool)
 
-    def test_channels_property(self):
-        """channels should list the expected measurement channels."""
-        ch = self.device.channels
-        self.assertIn("pressure", ch)
-        self.assertIn("status_code", ch)
-        self.assertIn("status_text", ch)
+    def test_plot_channels_property(self):
+        """plot_channels should list numeric measurement channels."""
+        ch = self.device.plot_channels
+        self.assertIn("ch1_pressure", ch)
+
+    def test_status_channels_property(self):
+        """status_channels should include display-oriented channels."""
+        ch = self.device.status_channels
+        self.assertIn("ch1_pressure", ch)
+        self.assertIn("ch1_status_code", ch)
+        self.assertIn("ch1_status_text", ch)
 
 
 class TestVCUHardwareErrorHandling(unittest.TestCase):

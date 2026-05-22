@@ -92,8 +92,19 @@ class VCUController(BaseDevice):
         return f"VCU-{self._address}"
 
     @property
-    def channels(self) -> list[str]:
-        return [ f"ch{i}_pressure" for i in range(1, self._number_of_sensors + 1)]
+    def plot_channels(self) -> list[str]:
+        """Numeric measurement channels suitable for plotting (pressure only)."""
+        return [f"ch{i}_pressure" for i in range(1, self._number_of_sensors + 1)]
+
+    @property
+    def status_channels(self) -> list[str]:
+        """All display channels: pressure, status code, and status text."""
+        channels: list[str] = []
+        for i in range(1, self._number_of_sensors + 1):
+            channels.append(f"ch{i}_pressure")
+            channels.append(f"ch{i}_status_code")
+            channels.append(f"ch{i}_status_text")
+        return channels
 
     def poll(self) -> Dict[int, Dict[str, Any]]:
         """Poll all pressure sensors.

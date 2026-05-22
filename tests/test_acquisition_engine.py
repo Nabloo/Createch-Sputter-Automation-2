@@ -32,7 +32,11 @@ class MockDevice(BaseDevice):
         return self._device_id
 
     @property
-    def channels(self) -> list:
+    def plot_channels(self) -> list:
+        return ["pressure"]
+
+    @property
+    def status_channels(self) -> list:
         return ["pressure", "status_code", "status_text"]
 
     def poll(self) -> Dict[str, Any]:

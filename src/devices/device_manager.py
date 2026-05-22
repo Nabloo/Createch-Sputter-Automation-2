@@ -430,18 +430,20 @@ class DeviceManager:
         panel_cfg: Optional[Dict[str, Any]],
     ) -> Optional[DevicePanel]:
         """Create a DevicePanel and add it to the dock."""
-        num_channels = dev_cfg.get("number_of_sensors", 1)
+        num_sensors = dev_cfg.get("number_of_sensors", 1)
         dev_type = dev_cfg.get("type", "Unknown")
         port = dev_cfg.get("port", "")
         baudrate = dev_cfg.get("baudrate", 9600)
         available_ports = self.list_available_ports()
+        status_channels = device.status_channels if hasattr(device, "status_channels") else []
         panel = DevicePanel(
             device.device_id,
             device_type=dev_type,
-            num_channels=num_channels,
+            num_channels=num_sensors,
             port=port,
             baudrate=baudrate,
             available_ports=available_ports,
+            status_channels=status_channels
         )
         panel.port_changed.connect(self._on_panel_port_changed)
         panel.baudrate_changed.connect(self._on_panel_baudrate_changed)
@@ -511,10 +513,10 @@ class DeviceManager:
             # (e.g. from an older config that only stored visible channels).
             dev_cfg = find_device_config(self._config, device_id)
             if dev_cfg:
-                # Use the device's actual channel list if we have the device
+                # Use the device's actual plot-channel list if we have the device
                 dev = self._devices.get(device_id)
                 if dev:
-                    all_channels = list(dev.channels)
+                    all_channels = list(dev.plot_channels)
                 else:
                     num_sensors = dev_cfg.get("number_of_sensors", 1)
                     all_channels = [
@@ -582,7 +584,7 @@ class DeviceManager:
 
         default_device = device_ids[0]
         dev = self._devices.get(default_device)
-        channels = list(dev.channels) if dev else ["ch1_pressure"]
+        channels = list(dev.plot_channels) if dev else ["ch1_pressure"]
 
         # Inherit history and x-axis origin from existing plots
         existing = list(self._plots.values())

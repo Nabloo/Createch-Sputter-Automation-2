@@ -42,7 +42,11 @@ class SQMController(BaseDevice):
         return f"SQM-{self._address}"
 
     @property
-    def channels(self) -> List[str]:
+    def plot_channels(self) -> List[str]:
+        return list(self._channels)
+
+    @property
+    def status_channels(self) -> List[str]:
         return list(self._channels)
 
     @property

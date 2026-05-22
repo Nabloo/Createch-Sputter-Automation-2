@@ -47,28 +47,29 @@ class TestConstruction(unittest.TestCase):
         ctrl = SQMController(_make_config(address=3))
         self.assertEqual(ctrl.device_id, "SQM-3")
 
-    def test_channels_default_2_sensors(self):
+    def test_plot_channels_default_2_sensors(self):
         ctrl = SQMController(_make_config())
         expected = [
             "ch1_rate", "ch1_thickness", "ch1_frequency",
             "ch2_rate", "ch2_thickness", "ch2_frequency",
         ]
-        self.assertEqual(ctrl.channels, expected)
+        self.assertEqual(ctrl.plot_channels, expected)
+        self.assertEqual(ctrl.status_channels, expected)
 
-    def test_channels_max_6_sensors(self):
+    def test_plot_channels_max_6_sensors(self):
         ctrl = SQMController(_make_config(number_of_sensors=6))
-        self.assertEqual(len(ctrl.channels), 18)
-        self.assertIn("ch6_rate", ctrl.channels)
-        self.assertIn("ch6_frequency", ctrl.channels)
+        self.assertEqual(len(ctrl.plot_channels), 18)
+        self.assertIn("ch6_rate", ctrl.plot_channels)
+        self.assertIn("ch6_frequency", ctrl.plot_channels)
 
-    def test_channels_clamped_to_6(self):
+    def test_plot_channels_clamped_to_6(self):
         ctrl = SQMController(_make_config(number_of_sensors=99))
-        self.assertEqual(len(ctrl.channels), 18)
+        self.assertEqual(len(ctrl.plot_channels), 18)
 
-    def test_channels_clamped_to_min_1(self):
+    def test_plot_channels_clamped_to_min_1(self):
         ctrl = SQMController(_make_config(number_of_sensors=0))
-        self.assertEqual(len(ctrl.channels), 3)
-        self.assertIn("ch1_rate", ctrl.channels)
+        self.assertEqual(len(ctrl.plot_channels), 3)
+        self.assertIn("ch1_rate", ctrl.plot_channels)
 
     def test_firmware_version_none_initially(self):
         ctrl = SQMController(_make_config())

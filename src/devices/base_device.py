@@ -55,8 +55,19 @@ class BaseDevice(ABC):
 
     @property
     @abstractmethod
-    def channels(self) -> list[str]:
-        """Names of available measurement channels."""
+    def plot_channels(self) -> list[str]:
+        """Names of channels suitable for plotting (numeric measurement values)."""
+        ...
+
+    @property
+    @abstractmethod
+    def status_channels(self) -> list[str]:
+        """Names of all channels to display in the device-status panel.
+
+        May include non-plottable channels such as status codes and
+        status text strings.  Every key returned by ``poll()`` (after
+        flattening) that has a corresponding label here will be shown.
+        """
         ...
 
     @property
