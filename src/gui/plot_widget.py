@@ -694,24 +694,6 @@ class PlotWidget(QWidget):
         )
         self._curves[name] = curve
 
-    def _update_symbols(self, curve: pg.PlotDataItem) -> None:
-        """Hide dot symbols when data density exceeds ~1 dot per 2 pixels."""
-        view_range = self._plot.viewRange()  # [[xmin, xmax], [ymin, ymax]]
-        x_range = view_range[0]
-        if x_range[1] <= x_range[0]:
-            return
-        pixel_width = max(self._plot.width(), 1)
-        x_data = curve.xData
-        if x_data is None or len(x_data) == 0:
-            return
-        points_in_view = int(np.sum(
-            (x_data >= x_range[0]) & (x_data <= x_range[1])
-        ))
-        if points_in_view / pixel_width > 0.5:
-            curve.setSymbol(None)
-        else:
-            curve.setSymbol('o')
-
     def _remove_channel(self, name: str) -> None:
         self._channels.pop(name, None)
         self._buffers.pop(name, None)
@@ -732,7 +714,6 @@ class PlotWidget(QWidget):
             return
         xs, ys = zip(*buf) if buf else ([], [])
         curve.setData(list(xs), list(ys))
-        self._update_symbols(curve)
 
     def _trim_buffers(self) -> None:
         if self._history_seconds <= 0 or self._t0 is None:
