@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QSizePolicy,
+    QSpinBox,
     QStatusBar,
     QToolBar,
     QWidget,
@@ -167,6 +168,20 @@ class MainWindow(QMainWindow):
         self._clear_all_action.setStatusTip("Clear data from all plots")
         self._clear_all_action.setEnabled(False)
         self._toolbar.addAction(self._clear_all_action)
+
+        self._toolbar.addSeparator()
+
+        # History window spinner (applies to all plots)
+        history_label = QLabel("  History:")
+        self._toolbar.addWidget(history_label)
+
+        self._history_spin = QSpinBox()
+        self._history_spin.setRange(0, 3600)
+        self._history_spin.setSpecialValueText("All")
+        self._history_spin.setSuffix(" s")
+        self._history_spin.setToolTip("Rolling history window (0 = show everything)")
+        self._history_spin.setMinimumWidth(80)
+        self._toolbar.addWidget(self._history_spin)
 
     # ------------------------------------------------------------------
     # Status bar

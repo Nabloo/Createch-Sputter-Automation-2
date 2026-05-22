@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QScrollArea,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -37,7 +36,6 @@ class PlotConfigDialog(QDialog):
         channels: List[str],
         colours: Optional[Dict[str, str]] = None,
         visibility: Optional[Dict[str, bool]] = None,
-        history_seconds: float = 60.0,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -47,7 +45,6 @@ class PlotConfigDialog(QDialog):
         self._channels = list(channels)
         self._colours = dict(colours) if colours else {}
         self._visibility = dict(visibility) if visibility else {}
-        self._history_seconds = history_seconds
 
         self._checkboxes: Dict[str, QCheckBox] = {}
         self._colour_buttons: Dict[str, QPushButton] = {}
@@ -70,10 +67,6 @@ class PlotConfigDialog(QDialog):
     def channel_visibility(self) -> Dict[str, bool]:
         return {ch: cb.isChecked() for ch, cb in self._checkboxes.items()}
 
-    @property
-    def history_seconds(self) -> float:
-        return float(self._history_spin.value())
-
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
@@ -92,19 +85,6 @@ class PlotConfigDialog(QDialog):
 
         channels_layout.addWidget(scroll)
         layout.addWidget(channels_group)
-
-        history_group = QGroupBox("Display")
-        history_layout = QFormLayout(history_group)
-
-        self._history_spin = QSpinBox()
-        self._history_spin.setRange(0, 3600)
-        self._history_spin.setSpecialValueText("All")
-        self._history_spin.setSuffix(" s")
-        self._history_spin.setValue(int(self._history_seconds))
-        self._history_spin.setToolTip("Rolling history window (0 = show everything)")
-        history_layout.addRow("History window:", self._history_spin)
-
-        layout.addWidget(history_group)
 
         button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel

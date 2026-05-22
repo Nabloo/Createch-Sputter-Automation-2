@@ -51,7 +51,7 @@
           "ch2_pressure": true,
           "ch3_pressure": true
         },
-        "history_seconds": 60.0
+        "history_seconds": 0.0
       },
       {
         "dock_id": "plot_1",
@@ -72,7 +72,7 @@
           "ch2_pressure": true,
           "ch3_pressure": true
         },
-        "history_seconds": 60.0
+        "history_seconds": 0.0
       },
       {
         "dock_id": "plot_2",
@@ -93,7 +93,7 @@
           "ch2_pressure": true,
           "ch3_pressure": true
         },
-        "history_seconds": 60.0
+        "history_seconds": 0.0
       }
     ],
     "device_panels": [

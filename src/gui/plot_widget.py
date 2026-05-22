@@ -229,6 +229,27 @@ class PlotWidget(QWidget):
         for name in self._curves:
             self._update_curve(name)
 
+    def backfill_from_store(self, store, device_id: str) -> None:
+        """Clear buffers and reload all history from DataStore.
+
+        Called when the history window is enlarged so the plot can
+        display data that was previously trimmed.  The store is
+        queried for the full history of every configured channel.
+        """
+        channels = list(self._channels.keys())
+        if not channels:
+            return
+
+        # Clear existing buffers so we don't double up
+        for buf in self._buffers.values():
+            buf.clear()
+
+        history: Dict[str, list] = {}
+        for ch in channels:
+            history[ch] = store.get_history(device_id, ch)
+        if any(history.values()):
+            self.load_history(history)
+
     @property
     def device_id(self) -> str:
         return self._selected_device or self._device_id
@@ -404,13 +425,11 @@ class PlotWidget(QWidget):
             channels=channels,
             colours=colours,
             visibility=visibility,
-            history_seconds=self._history_seconds,
             parent=self,
         )
         if dlg.exec():
             for name, cfg in self._channels.items():
                 cfg["visible"] = dlg.channel_visibility.get(name, True)
-            self.set_history_seconds(dlg.history_seconds)
 
             for i, ch in enumerate(dlg.selected_channels):
                 if ch in self._channels:

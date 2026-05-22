@@ -455,17 +455,38 @@ class DeviceManager:
         logger.info("Removed plot %r", dock_id)
 
     def _on_plot_state_changed(self, dock_id: str) -> None:
-        """Called when a plot's device, channels, visibility, or history changes."""
-        plot = self._plots.get(dock_id)
-        if plot is not None:
-            self._sync_history(plot.history_seconds)
+        """Called when a plot's device, channels or visibility changes."""
         self._persist_plots()
 
     def _sync_history(self, seconds: float) -> None:
-        """Propagate *seconds* as the history window to every plot."""
+        """Propagate *seconds* as the history window to every plot.
+
+        When the window is enlarged, backfills historical data from
+        the DataStore so previously trimmed data reappears.
+        """
+        # Keep toolbar in sync (avoid signal loop)
+        w = self._window
+        if int(w._history_spin.value()) != int(seconds):
+            w._history_spin.blockSignals(True)
+            w._history_spin.setValue(int(seconds))
+            w._history_spin.blockSignals(False)
+
         for plot in self._plots.values():
             if plot.history_seconds != seconds:
+                was_smaller = plot.history_seconds > 0 and (
+                    seconds <= 0 or seconds > plot.history_seconds
+                )
                 plot.set_history_seconds(seconds)
+                # Backfill from DataStore when the window was enlarged
+                if was_smaller:
+                    plot.backfill_from_store(
+                        self._store, plot.device_id,
+                    )
+        self._persist_plots()
+
+    def _on_history_changed(self, value: int) -> None:
+        """Toolbar history spinner changed — propagate to all plots."""
+        self._sync_history(float(value))
 
     def _persist_plots(self) -> None:
         """Save all current plot configurations to config.json.
@@ -567,6 +588,12 @@ class DeviceManager:
         w._disconnect_action.triggered.connect(self.disconnect_all)
         w._add_plot_action.triggered.connect(self.add_plot)
         w._clear_all_action.triggered.connect(self.clear_all_plots)
+
+        # History window spinner — same for all plots
+        first_plot = next(iter(self._plots.values()), None)
+        if first_plot is not None:
+            w._history_spin.setValue(int(first_plot.history_seconds))
+        w._history_spin.valueChanged.connect(self._on_history_changed)
 
     def _wire_status_timer(self) -> None:
         """Wire MainWindow's existing status refresh timer to our method."""
