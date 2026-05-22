@@ -517,6 +517,24 @@ class PlotWidget(QWidget):
         )
         self._curves[name] = curve
 
+    def _update_symbols(self):
+        view_range = self._plot.viewRange()  # [[xmin, xmax], [ymin, ymax]]
+        x_span = view_range[0][1] - view_range[0][0]
+        pixel_width = self._plot.width()
+
+        points_in_view = np.sum(
+            (curve.xData >= view_range[0][0]) &
+            (curve.xData <= view_range[0][1])
+        ) if curve.xData is not None else 0
+
+        dots_per_pixel = points_in_view / pixel_width
+
+        if dots_per_pixel > 0.5:  # more than 1 dot per 2 pixels → hide symbols
+            curve.setSymbol(None)
+        else:
+            curve.setSymbol('o')
+
+
     def _remove_channel(self, name: str) -> None:
         self._channels.pop(name, None)
         self._buffers.pop(name, None)
@@ -534,6 +552,7 @@ class PlotWidget(QWidget):
             return
         xs, ys = zip(*buf) if buf else ([], [])
         curve.setData(list(xs), list(ys))
+        self._update_symbols()
 
     def _trim_buffers(self) -> None:
         if self._history_seconds <= 0 or self._t0 is None:
