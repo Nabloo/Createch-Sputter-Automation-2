@@ -27,33 +27,11 @@
     "window": {
       "width": 1424,
       "height": 813,
-      "x": 2210,
-      "y": 349,
+      "x": 153,
+      "y": 111,
       "maximized": false
     },
     "plots": [
-      {
-        "dock_id": "plot_0",
-        "device_id": "VCU-0",
-        "area": "right",
-        "channels": [
-          "ch1_pressure",
-          "ch2_pressure",
-          "ch3_pressure"
-        ],
-        "colours": [
-          "#00bfff",
-          "#ff6b6b",
-          "#51cf66"
-        ],
-        "visibility": {
-          "ch1_pressure": true,
-          "ch2_pressure": true,
-          "ch3_pressure": true
-        },
-        "history_seconds": 0.0,
-        "y_log": false
-      },
       {
         "dock_id": "plot_2",
         "device_id": "VCU-0",
@@ -84,6 +62,6 @@
         "area": "left"
       }
     ],
-    "last_log_open_dir": "C:/Users/Robin/OneDrive - student.kit.edu/Dokumente/Eigene Dokumente/Programme/Eigene Programme/Sputter-Automation-2/tests/example_logs"
+    "last_log_open_dir": ""
   }
 }
