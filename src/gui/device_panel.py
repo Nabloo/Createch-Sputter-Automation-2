@@ -99,8 +99,9 @@ class DevicePanel(QWidget):
         self._num_channels = num_channels
         self._connected = False
 
-        # Per-channel value labels
+        # Per-channel value labels and unit labels
         self._value_labels: Dict[str, QLabel] = {}
+        self._unit_labels: Dict[str, QLabel] = {}
 
         self._build_ui(port, baudrate, available_ports or [])
         self._data_arrived.connect(self._on_data_arrived)
@@ -173,6 +174,7 @@ class DevicePanel(QWidget):
         values_layout = QVBoxLayout()
         values_layout.setSpacing(4)
         channel_stylesheet = "font-size: 16px; font-weight: bold; font-family: monospace;"
+        unit_stylesheet = "font-size: 14px; color: #aaa; margin-left: 4px;"
 
         for ch in range(1, self._num_channels + 1):
             ch_box = QGroupBox(f"Sensor {ch}")
@@ -186,8 +188,19 @@ class DevicePanel(QWidget):
                 channel_label.setStyleSheet(channel_stylesheet)
                 # Strip the prefix for a cleaner display name
                 display_name = channel[len(prefix):].replace("_", " ").title()
-                ch_form.addRow(f"{display_name}:", channel_label)
+
+                # Value + unit side-by-side
+                row = QHBoxLayout()
+                row.setSpacing(0)
+                row.addWidget(channel_label)
+                unit_label = QLabel("")
+                unit_label.setStyleSheet(unit_stylesheet)
+                row.addWidget(unit_label)
+                row.addStretch()
+
+                ch_form.addRow(f"{display_name}:", row)
                 self._value_labels[channel] = channel_label
+                self._unit_labels[channel] = unit_label
 
             values_layout.addWidget(ch_box)
 
@@ -337,6 +350,13 @@ class DevicePanel(QWidget):
                         flat[f"ch{ch_key}_{field}"] = value
             data = flat
 
+        # Derive sensor number from a channel key like "ch1_pressure"
+        def _sensor_num(key: str) -> str:
+            parts = key.split("_")
+            if parts and parts[0].startswith("ch") and len(parts[0]) > 2:
+                return parts[0][2:]
+            return ""
+
         for key, value in data.items():
             lbl = self._value_labels.get(key)
             if lbl and isinstance(value, (int, float, str)):
@@ -344,3 +364,15 @@ class DevicePanel(QWidget):
                     lbl.setText(f"{value:.4e}")
                 else:
                     lbl.setText(str(value))
+
+            # Update unit label if this channel has a unit in the data
+            # (e.g. ch1_pressure → look for ch1_unit; skip status fields)
+            if "status" not in key:
+                unit_key = f"ch{_sensor_num(key)}_unit"
+                unit_lbl = self._unit_labels.get(key)
+                if unit_lbl:
+                    unit_val = data.get(unit_key)
+                    if unit_val and isinstance(unit_val, str):
+                        unit_lbl.setText(unit_val)
+                    else:
+                        unit_lbl.setText("")
