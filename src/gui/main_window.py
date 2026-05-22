@@ -114,13 +114,6 @@ class MainWindow(QMainWindow):
         self._theme_action.triggered.connect(self._on_toggle_theme)
         view_menu.addAction(self._theme_action)
 
-        view_menu.addSeparator()
-
-        reset_layout_action = QAction("&Reset Layout", self)
-        reset_layout_action.setStatusTip("Restore the default dock layout")
-        reset_layout_action.triggered.connect(self._on_reset_layout)
-        view_menu.addAction(reset_layout_action)
-
         # ---- Help ----
         help_menu = menu_bar.addMenu("&Help")
 
@@ -409,12 +402,6 @@ class MainWindow(QMainWindow):
     def set_config(self, config: dict) -> None:
         """Store a reference to the app config for theme persistence."""
         self._config = config
-
-    def _on_reset_layout(self) -> None:
-        """Remove all docks and restore defaults."""
-        for dock_id in self.dock_manager.panel_ids():
-            self.dock_manager.remove_panel(dock_id)
-        logger.info("Dock layout reset")
 
     def _on_about(self) -> None:
         QMessageBox.about(

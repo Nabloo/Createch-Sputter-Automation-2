@@ -349,7 +349,9 @@ class PlotWidget(QWidget):
         for buf in self._buffers.values():
             buf.clear()
 
-        timestamps = log_data.timestamps
+        # Strip timezone so we can compare with the naive bounds
+        # passed by DeviceManager (QDateTime → Python datetime loses tz).
+        timestamps = [t.replace(tzinfo=None) for t in log_data.timestamps]
 
         # ---------- filter to the requested time window ----------
         indices = [
@@ -796,10 +798,6 @@ class PlotWidget(QWidget):
             curves.append(curve)
 
         self._log_curves[name] = curves
-
-        # Apply dot-hiding (same as live-mode _update_curve does)
-        for curve in curves:
-            self._update_symbols(curve)
 
     def _clear_log_curves(self) -> None:
         """Remove all log-viewer PlotDataItem segments from the plot."""

@@ -1,7 +1,8 @@
 """Tests for log-viewer features - gap detection and column matching."""
 
+import math
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.data_logging.log_reader import LogData
 from src.gui.plot_widget import _split_into_segments, PlotWidget
@@ -160,6 +161,247 @@ class TestFindLogColumn(unittest.TestCase):
             PlotWidget._find_log_column(log_data, "ch1_pressure"),
             "ch1_pressure",
         )
+
+
+class TestExampleLogs(unittest.TestCase):
+    """Integration tests loading real CSV log files and verifying the full
+    pipeline: LogFileReader → _find_log_column → _split_into_segments."""
+
+    @classmethod
+    def setUpClass(cls):
+        from src.data_logging.log_reader import LogFileReader
+        cls._log_21 = LogFileReader.read(
+            "tests/example_logs/2026-05-21_VCU-0.csv"
+        )
+        cls._log_22 = LogFileReader.read(
+            "tests/example_logs/2026-05-22_VCU-0.csv"
+        )
+
+    # ------------------------------------------------------------------
+    # Basic parsing
+    # ------------------------------------------------------------------
+
+    def test_parse_2026_05_21_basics(self):
+        """CSV parsed with correct metadata and structures."""
+        log = self._log_21
+        self.assertEqual(log.device_id, "VCU-0")
+        self.assertEqual(log.date, "2026-05-21")
+        self.assertGreater(len(log.timestamps), 100)
+        self.assertIn("timestamp", log.headers)
+        self.assertIn("ch1_pressure [mbar]", log.headers)
+        self.assertIn("ch2_pressure [mbar]", log.headers)
+        self.assertIn("ch3_pressure [mbar]", log.headers)
+        # Values dict should have pressure columns (non-NaN)
+        self.assertIn("ch1_pressure [mbar]", log.values)
+        self.assertIn("ch2_pressure [mbar]", log.values)
+        self.assertIn("ch3_pressure [mbar]", log.values)
+        # status_code columns should also be present (they have numeric values)
+        self.assertIn("ch1_status_code", log.values)
+        # Row counts must match
+        n = len(log.timestamps)
+        for col in log.values:
+            self.assertEqual(
+                len(log.values[col]), n,
+                f"Column {col!r} has {len(log.values[col])} values, expected {n}"
+            )
+
+    def test_parse_2026_05_22_basics(self):
+        """Second example log also parses correctly."""
+        log = self._log_22
+        self.assertEqual(log.device_id, "VCU-0")
+        self.assertEqual(log.date, "2026-05-22")
+        self.assertGreater(len(log.timestamps), 50)
+        self.assertIn("ch1_pressure [mbar]", log.headers)
+        n = len(log.timestamps)
+        for col in log.values:
+            self.assertEqual(len(log.values[col]), n)
+
+    def test_timestamps_are_timezone_aware(self):
+        """CSV timestamps carry timezone info (UTC or +02:00)."""
+        log = self._log_21
+        for ts in log.timestamps[:5]:
+            self.assertIsNotNone(ts.tzinfo)
+        # Later entries may be +02:00
+        # All timestamps should be sorted ascending
+        for i in range(1, len(log.timestamps)):
+            self.assertGreaterEqual(log.timestamps[i], log.timestamps[i - 1])
+
+    def test_timestamps_strip_to_naive(self):
+        """Stripping tzinfo produces naive datetimes (safe for comparison)."""
+        log = self._log_21
+        naive = [t.replace(tzinfo=None) for t in log.timestamps[:10]]
+        for ts in naive:
+            self.assertIsNone(ts.tzinfo)
+
+    # ------------------------------------------------------------------
+    # Column matching with real headers
+    # ------------------------------------------------------------------
+
+    def test_find_log_column_real_headers(self):
+        """_find_log_column matches channel names to bracketed CSV headers."""
+        log = self._log_21
+        # ch1_pressure should match "ch1_pressure [mbar]"
+        self.assertEqual(
+            PlotWidget._find_log_column(log, "ch1_pressure"),
+            "ch1_pressure [mbar]",
+        )
+        self.assertEqual(
+            PlotWidget._find_log_column(log, "ch2_pressure"),
+            "ch2_pressure [mbar]",
+        )
+        self.assertEqual(
+            PlotWidget._find_log_column(log, "ch3_pressure"),
+            "ch3_pressure [mbar]",
+        )
+        # status_code columns match exactly
+        self.assertEqual(
+            PlotWidget._find_log_column(log, "ch1_status_code"),
+            "ch1_status_code",
+        )
+
+    def test_find_log_column_no_match_real(self):
+        """_find_log_column returns None for nonexistent channels."""
+        log = self._log_21
+        self.assertIsNone(PlotWidget._find_log_column(log, "ch99_pressure"))
+        self.assertIsNone(PlotWidget._find_log_column(log, "temperature"))
+
+    # ------------------------------------------------------------------
+    # Full pipeline simulation (mirrors PlotWidget.load_log_data)
+    # ------------------------------------------------------------------
+
+    def test_full_pipeline_time_filter(self):
+        """Filtering by time range yields correct subset of data."""
+        log = self._log_21
+        timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
+        t_start = timestamps[0]
+        t_end = timestamps[99]  # first 100 points
+
+        indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
+        self.assertEqual(len(indices), 100)
+
+        # Extract values for ch1_pressure
+        col = PlotWidget._find_log_column(log, "ch1_pressure")
+        self.assertIsNotNone(col)
+        ys = [log.values[col][i] for i in indices]
+        self.assertEqual(len(ys), 100)
+        # All ch1 values should be ~990 mbar
+        for y in ys:
+            self.assertAlmostEqual(y, 990.0, delta=1.0)
+
+    def test_full_pipeline_nan_filtering(self):
+        """NaN values are safely filtered during the pipeline without errors."""
+        log = self._log_21
+        col = PlotWidget._find_log_column(log, "ch1_pressure")
+        ys = log.values[col]
+        # Filter NaN — must not raise and must leave some valid values
+        clean = [y for y in ys if not math.isnan(y)]
+        self.assertGreater(len(clean), 0)
+        self.assertLessEqual(len(clean), len(ys))
+
+    def test_full_pipeline_gap_detection(self):
+        """The DST timezone shift gap (>60 s) in the real data produces
+        at least 2 segments.  (Exact count depends on file contents;
+        this test only asserts the looser invariant.)"""
+        log = self._log_21
+        timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
+        t_start = timestamps[0]
+        t_end = timestamps[-1]
+
+        # Full range
+        indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
+        self.assertEqual(len(indices), len(timestamps))
+
+        filtered_ts = [timestamps[i] for i in indices]
+        xs = [(t - t_start).total_seconds() for t in filtered_ts]
+
+        # Get ch1_pressure values
+        col = PlotWidget._find_log_column(log, "ch1_pressure")
+        ys = [log.values[col][i] for i in indices]
+
+        # Filter NaN
+        valid = [(x, y) for x, y in zip(xs, ys) if not math.isnan(y)]
+        clean_xs = [v[0] for v in valid]
+        clean_ys = [v[1] for v in valid]
+
+        segments = _split_into_segments(clean_xs, clean_ys)
+        # At least 2 segments expected (DST shift: +00:00 → +02:00)
+        self.assertGreaterEqual(len(segments), 2)
+
+        # Verify segments are in order and cover all data
+        total = sum(len(s[0]) for s in segments)
+        self.assertEqual(total, len(clean_xs))
+
+        # First segment should have substantial data
+        self.assertGreater(len(segments[0][0]), 10)
+
+    def test_full_pipeline_relative_x_values(self):
+        """Relative x-axis mode starts at 0 and increases monotonically."""
+        log = self._log_21
+        timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
+        t_start = timestamps[0]
+        t_end = timestamps[-1]
+
+        indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
+        filtered_ts = [timestamps[i] for i in indices]
+        xs = [(t - t_start).total_seconds() for t in filtered_ts]
+
+        # First x should be 0
+        self.assertEqual(xs[0], 0.0)
+        # All x values should be non-decreasing
+        for i in range(1, len(xs)):
+            self.assertGreaterEqual(xs[i], xs[i - 1])
+
+        # Last x should reflect the total duration (~3.5 hours in seconds)
+        # The data spans ~14:49 to ~18:19 UTC → about 12600 seconds
+        self.assertGreater(xs[-1], 10000)
+        self.assertLess(xs[-1], 20000)
+
+    def test_full_pipeline_absolute_x_values(self):
+        """Absolute x-axis mode produces Unix epoch timestamps."""
+        log = self._log_21
+        timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
+        t_start = timestamps[0]
+        t_end = timestamps[-1]
+
+        indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
+        filtered_ts = [timestamps[i] for i in indices]
+        xs = [t.timestamp() for t in filtered_ts]
+
+        # All x values should be positive (~1.78e9 for year 2026)
+        for x in xs[:5]:
+            self.assertGreater(x, 1.7e9)
+        # Non-decreasing
+        for i in range(1, len(xs)):
+            self.assertGreaterEqual(xs[i], xs[i - 1])
+
+    def test_full_pipeline_ch2_ch3_values(self):
+        """ch2 is ~1300 mbar, ch3 varies ~2.4–2.5 mbar."""
+        log = self._log_21
+        timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
+        t_start = timestamps[0]
+        t_end = timestamps[-1]
+        indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
+
+        for ch, expected_min, expected_max in [
+            ("ch2_pressure", 1290, 1310),
+            ("ch3_pressure", 2.3, 2.7),
+        ]:
+            col = PlotWidget._find_log_column(log, ch)
+            self.assertIsNotNone(col, f"Column not found for {ch}")
+            ys = [log.values[col][i] for i in indices if not math.isnan(log.values[col][i])]
+            self.assertGreater(len(ys), 0, f"No valid values for {ch}")
+            self.assertGreaterEqual(min(ys), expected_min, f"{ch} min too low")
+            self.assertLessEqual(max(ys), expected_max, f"{ch} max too high")
+
+    def test_full_pipeline_empty_time_range(self):
+        """A time range with no data produces empty indices."""
+        log = self._log_21
+        timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
+        # Set range completely before the data
+        t_start = timestamps[0] - timedelta(hours=10)
+        t_end = timestamps[0] - timedelta(hours=1)
+        indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
+        self.assertEqual(len(indices), 0)
 
 
 if __name__ == "__main__":
