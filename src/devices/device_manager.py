@@ -244,24 +244,6 @@ class DeviceManager:
             })
         return ports
 
-    @staticmethod
-    def probe_port(port: str, baudrate: int = 9600, timeout: float = 1.0) -> Optional[str]:
-        """Try to identify a device on *port* by sending RVN and reading response.
-
-        Returns the firmware version string if a VCU responds, or None.
-        """
-        try:
-            import serial
-            ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
-            ser.write(b"RVN\r")
-            response = ser.readline().decode("ascii", errors="replace").strip()
-            ser.close()
-            if response and not response.startswith("?"):
-                return response
-        except Exception:
-            pass
-        return None
-
     # ------------------------------------------------------------------
     # Log-viewer mode orchestration (T4)
     # ------------------------------------------------------------------
