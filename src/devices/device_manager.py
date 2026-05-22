@@ -388,7 +388,9 @@ class DeviceManager:
         plot's own dropdown and Channels button.
 
         The new plot inherits the history window and x-axis origin
-        from existing plots so it stays in sync.
+        from existing plots so it stays in sync.  All historical data
+        already in the DataStore is replayed so the plot shows data
+        from the beginning of the measurement, not just from now.
         """
         device_ids = list(self._devices.keys())
         if not device_ids:
@@ -420,6 +422,14 @@ class DeviceManager:
         )
         self._store.subscribe(plot.push_data)
         self._plots[dock_id] = plot
+
+        # Replay all historical data so the new plot shows everything
+        # from the beginning of the measurement.
+        history: Dict[str, list] = {}
+        for ch in channels:
+            history[ch] = self._store.get_history(default_device, ch)
+        if any(history.values()):
+            plot.load_history(history)
 
         # Wire remove button
         plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))

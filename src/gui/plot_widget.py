@@ -197,14 +197,21 @@ class PlotWidget(QWidget):
         self,
         history: Dict[str, List[Tuple[datetime, Any]]],
     ) -> None:
-        """Pre-load history data from DataStore."""
+        """Pre-load history data from DataStore.
+
+        Converts absolute timestamps to seconds-relative-to-t0 so the
+        x-axis aligns with live data that arrived earlier.
+        """
         for channel_name, entries in history.items():
             if channel_name not in self._buffers:
                 self._buffers[channel_name] = deque()
             for ts, value in entries:
                 ts_float = ts.timestamp() if isinstance(ts, datetime) else float(ts)
+                if self._t0 is not None:
+                    ts_float -= self._t0
                 self._buffers[channel_name].append((ts_float, value))
             self._update_curve(channel_name)
+        self._trim_buffers()
 
     def clear(self) -> None:
         """Clear all plot data (preserves t0 for shared timeline)."""
