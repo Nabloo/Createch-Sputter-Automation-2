@@ -690,8 +690,6 @@ class PlotWidget(QWidget):
             [], [],
             pen=pg.mkPen(color=colour, width=2),
             name=name,
-            symbol='o',
-            symbolSize=4,
             autoDownsample=True,
         )
         self._curves[name] = curve
