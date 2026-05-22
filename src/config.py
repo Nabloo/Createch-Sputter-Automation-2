@@ -31,9 +31,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     }
   ],
   "logging": {
-    "enabled": true,
+    "enabled": True,
     "directory": "logs",
-    "rotation_enabled": true
+    "rotation_enabled": True
   },
   "gui": {
     "theme": "dark",
@@ -42,7 +42,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
       "height": 813,
       "x": 153,
       "y": 111,
-      "maximized": false
+      "maximized": False
     },
     "plots": [
       {
@@ -60,12 +60,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
           "#51cf66"
         ],
         "visibility": {
-          "ch1_pressure": true,
-          "ch2_pressure": true,
-          "ch3_pressure": true
+          "ch1_pressure": True,
+          "ch2_pressure": True,
+          "ch3_pressure": True
         },
         "history_seconds": 0.0,
-        "y_log": false
+        "y_log": False
       }
     ],
     "device_panels": [
