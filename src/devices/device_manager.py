@@ -308,6 +308,14 @@ class DeviceManager:
             for plot in self._plots.values():
                 plot.clear_log_data()
 
+                # Replay all historical data so the new plot shows everything
+                # from the beginning of the measurement.
+                history: Dict[str, list] = {}
+                for ch in plot.channels:
+                    history[ch] = self._store.get_history(plot.device_id, ch)
+                if any(history.values()):
+                    plot.load_history(history)
+
         logger.info("View mode switched to %s", "Live" if live else "View Log")
 
     def _load_log_file(self, filepath: str) -> None:
