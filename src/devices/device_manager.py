@@ -32,6 +32,7 @@ from src.data.datastore import DataStore
 from src.data_logging.data_logger import DataLogger
 from src.data_logging.log_reader import LogData, LogFileReader
 from src.devices.base_device import BaseDevice
+from src.devices.sqm_controller import SQMController
 from src.devices.vcu_controller import VCUController
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
@@ -39,6 +40,7 @@ from src.gui.plot_widget import PlotWidget
 logger = logging.getLogger(__name__)
 
 _DEVICE_TYPE_MAP: Dict[str, type] = {
+    "SQMController": SQMController,
     "VCUController": VCUController,
 }
 
@@ -430,7 +432,10 @@ class DeviceManager:
         panel_cfg: Optional[Dict[str, Any]],
     ) -> Optional[DevicePanel]:
         """Create a DevicePanel and add it to the dock."""
-        num_channels = dev_cfg.get("number of pressure sensors", 1)
+        num_channels = dev_cfg.get(
+            "number of pressure sensors",
+            dev_cfg.get("number_of_sensors", 1),
+        )
         dev_type = dev_cfg.get("type", "Unknown")
         panel = DevicePanel(
             device.device_id,
@@ -473,8 +478,18 @@ class DeviceManager:
             # (e.g. from an older config that only stored visible channels).
             dev_cfg = find_device_config(self._config, device_id)
             if dev_cfg:
-                num_sensors = dev_cfg.get("number of pressure sensors", 1)
-                all_channels = [f"ch{i}_pressure" for i in range(1, num_sensors + 1)]
+                # Use the device's actual channel list if we have the device
+                dev = self._devices.get(device_id)
+                if dev:
+                    all_channels = list(dev.channels)
+                else:
+                    num_sensors = dev_cfg.get(
+                        "number of pressure sensors",
+                        dev_cfg.get("number_of_sensors", 1),
+                    )
+                    all_channels = [
+                        f"ch{i}_pressure" for i in range(1, num_sensors + 1)
+                    ]
             else:
                 all_channels = pc.get("channels", [])
 
@@ -532,9 +547,8 @@ class DeviceManager:
             return
 
         default_device = device_ids[0]
-        dev_cfg = find_device_config(self._config, default_device)
-        num = dev_cfg.get("number of pressure sensors", 1) if dev_cfg else 1
-        channels = [f"ch{i}_pressure" for i in range(1, num + 1)]
+        dev = self._devices.get(default_device)
+        channels = list(dev.channels) if dev else ["ch1_pressure"]
 
         # Inherit history and x-axis origin from existing plots
         existing = list(self._plots.values())
