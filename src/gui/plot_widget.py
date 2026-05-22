@@ -506,6 +506,7 @@ class PlotWidget(QWidget):
             name=name,
             symbol='o',
             symbolSize=4,
+            autoDownsample=True,
         )
         self._curves[name] = curve
 
