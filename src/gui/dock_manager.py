@@ -44,7 +44,7 @@ class DockManager:
         title: str,
         widget: QWidget,
         area: Qt.DockWidgetArea = Qt.RightDockWidgetArea,
-        allowed_areas: Qt.DockWidgetAreas = Qt.RightDockWidgetArea,
+        allowed_areas: Qt.DockWidgetAreas = Qt.AllDockWidgetAreas,
     ) -> QDockWidget:
         """Create a dock widget containing *widget* and add it to the window.
 

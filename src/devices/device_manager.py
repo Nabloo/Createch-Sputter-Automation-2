@@ -440,6 +440,7 @@ class DeviceManager:
             num_channels=num_channels,
         )
         area = Qt.LeftDockWidgetArea
+        allowedAreas = Qt.LeftDockWidgetArea
         if panel_cfg:
             area = _AREA_MAP.get(panel_cfg.get("area", "left"), Qt.LeftDockWidgetArea)
         dock_id = panel_cfg.get("dock_id", f"device_{device.device_id}") if panel_cfg else f"device_{device.device_id}"
@@ -448,6 +449,7 @@ class DeviceManager:
             device.device_id,
             panel,
             area=area,
+            allowed_areas=allowedAreas,
         )
         # Give the device dock a maximum width so it doesn't take up
         # unnecessary horizontal space (Qt splits left/right areas
@@ -469,6 +471,7 @@ class DeviceManager:
             dock_id = pc.get("dock_id", f"plot_{device_id}")
             history = pc.get("history_seconds", 0)
             area = _AREA_MAP.get(pc.get("area", "right"), Qt.RightDockWidgetArea)
+            allowedAreas = Qt.RightDockWidgetArea
 
             # Always derive the full channel list from the device config.
             # The saved "channels" / "colours" lists may be incomplete
@@ -519,7 +522,7 @@ class DeviceManager:
             # Persist state changes (device switch, channel config, etc.)
             plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
 
-            self._window.dock_manager.add_panel(dock_id, "", plot, area=area)
+            self._window.dock_manager.add_panel(dock_id, "", plot, area=area, allowed_areas=allowedAreas)
             self._store.subscribe(plot.push_data)
             self._plots[dock_id] = plot
             logger.debug("PlotWidget created for %s (dock %s)", device_id, dock_id)
@@ -550,10 +553,15 @@ class DeviceManager:
 
         # Inherit history and x-axis origin from existing plots
         existing = list(self._plots.values())
-        shared_t0 = existing[0].t0 if existing else self._global_t0[0]
         shared_history = existing[0].history_seconds if existing else 0
 
-        dock_id = f"plot_{len(self._plots)}"
+        last_plot_id = list(self._plots.keys())[-1].split("_")[-1]
+        try:
+            last_plot_id = int(last_plot_id)
+        except ValueError:
+            last_plot_id = 0
+
+        dock_id = f"plot_{last_plot_id+1}"
 
         plot = PlotWidget(
             device_id=default_device,
@@ -564,7 +572,11 @@ class DeviceManager:
         plot.set_channels(channels)
 
         self._window.dock_manager.add_panel(
-            dock_id, "", plot, area=Qt.RightDockWidgetArea,
+            panel_id=dock_id,
+            title="",
+            widget=plot,
+            area=Qt.RightDockWidgetArea,
+            allowed_areas=Qt.RightDockWidgetArea,
         )
         self._store.subscribe(plot.push_data)
         self._plots[dock_id] = plot

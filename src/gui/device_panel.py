@@ -134,23 +134,14 @@ class DevicePanel(QWidget):
         layout.addWidget(sep)
 
         # ---- Live values ----
-        values_header = QHBoxLayout()
-        values_header.setSpacing(8)
-        values_title = QLabel("Live Values")
-        values_title.setStyleSheet("font-weight: bold; color: #dcdcde;")
-        values_header.addWidget(values_title)
         self._unit_label = QLabel("")
         self._unit_label.setStyleSheet("color: #888; font-size: 12px;")
-        values_header.addWidget(self._unit_label)
-        values_header.addStretch()
-
         values_group = QGroupBox()
         values_group.setLayout(QVBoxLayout())
         values_group.layout().setContentsMargins(0, 4, 0, 0)
-        values_group.layout().addLayout(values_header)
 
         values_layout = QVBoxLayout()
-        values_layout.setSpacing(8)
+        values_layout.setSpacing(4)
 
         for ch in range(1, self._num_channels + 1):
             ch_box = QGroupBox(f"Channel {ch}")
@@ -259,7 +250,6 @@ class DevicePanel(QWidget):
     ) -> None:
         """Update the device info section."""
         if sensor_name:
- 
             self._sensor_label.setText(sensor_name)
         if firmware:
             self._firmware_label.setText(firmware)
