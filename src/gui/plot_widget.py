@@ -201,6 +201,10 @@ class PlotWidget(QWidget):
 
         Converts absolute timestamps to seconds-relative-to-t0 so the
         x-axis aligns with live data that arrived earlier.
+
+        Buffers data for every channel (including hidden ones) so
+        re-enabling a channel shows its full, correctly-trimmed
+        history.  Only *visible* channel curves are updated.
         """
         for channel_name, entries in history.items():
             if channel_name not in self._buffers:
@@ -210,7 +214,9 @@ class PlotWidget(QWidget):
                 if self._t0 is not None:
                     ts_float -= self._t0
                 self._buffers[channel_name].append((ts_float, value))
-            self._update_curve(channel_name)
+            # Only render visible channels; hidden ones stay in buffer only.
+            if self._channels.get(channel_name, {}).get("visible", True):
+                self._update_curve(channel_name)
         self._trim_buffers()
 
     def clear(self) -> None:
@@ -226,8 +232,9 @@ class PlotWidget(QWidget):
         """Set the rolling history window in seconds."""
         self._history_seconds = seconds
         self._trim_buffers()
-        for name in self._curves:
-            self._update_curve(name)
+        for name, cfg in self._channels.items():
+            if cfg.get("visible", True):
+                self._update_curve(name)
 
     def backfill_from_store(self, store, device_id: str) -> None:
         """Clear buffers and reload all history from DataStore.
