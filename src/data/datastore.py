@@ -91,6 +91,12 @@ class DataStore:
         for callback in subscribers:
             try:
                 callback(device_id, timestamp, data)
+            except RuntimeError:
+                # Callback's underlying C++ object was deleted
+                # (e.g. PlotWidget removed while acquisition runs).
+                # Don't log — the bound method's __repr__ would also
+                # crash on the deleted object.
+                pass
             except Exception:
                 logger.exception(
                     "DataStore subscriber %r raised an exception", callback

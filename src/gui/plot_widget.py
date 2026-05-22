@@ -149,13 +149,20 @@ class PlotWidget(QWidget):
         """Push a measurement update.  Thread-safe.
 
         Only forwards data matching the currently selected device.
+        Silently drops data if the underlying C++ object has been
+        deleted (e.g. the plot was removed while acquisition runs).
         """
         # Use _selected_device (plain str, safe to read from any thread)
         # instead of _device_combo.currentText() (Qt widget, GUI thread only)
         if self._selected_device and device_id != self._selected_device:
             return
         ts_float = timestamp.timestamp()
-        self._data_arrived.emit(device_id, ts_float, dict(data))
+        try:
+            self._data_arrived.emit(device_id, ts_float, dict(data))
+        except RuntimeError:
+            # Signal source (C++ object) was deleted — plot removed
+            # while the acquisition engine was still running.
+            pass
 
     def set_channels(
         self,

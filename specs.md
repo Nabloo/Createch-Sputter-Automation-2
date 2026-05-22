@@ -1,613 +1,342 @@
-
-# Sputter Automation - Measurement & Control System
+# Log Viewer – Historical Data Browser
 
 ## Why
 
-Control the I/O of various measurement systems (pressure gauges, temperature controllers, flow controllers, RF generators, pumps, etc.) connected via USB-to-serial adapters to a Windows 11 PC during sputter deposition processes.
+Users need to review past measurement runs without leaving the application.
+Currently, CSV log files accumulate in the `logs/` directory but can only be
+inspected with external tools (Excel, VS Code, etc.).  A built-in viewer lets
+operators correlate pressure curves with process events, zoom into specific
+time windows, and export or screenshot findings – all within the familiar
+dark-themed lab UI.
 
-Replace manual LabVIEW-based monitoring with a modern, extensible Python application that provides:
-- real-time visualization,
-- modular hardware integration,
-- reliable logging,
-- scalable multi-device support,
-- future automation capabilities.
+## What
 
----
+An **application-wide mode toggle** in the main toolbar that switches all
+existing plot panels between **Live** (real-time data from `DataStore`) and
+**View Log** (historical data from a CSV file).
 
-# What
+- **Toggle button** in the toolbar: "Live" | "View Log"
+- When switched to **View Log**, the toolbar reveals additional controls:
+  log file picker, time-range widgets, and x-axis mode toggle.
+- **No new panels** — the existing `PlotWidget` instances render the CSV
+  data instead of live data.  Channel configuration (checkboxes, colours,
+  visibility) from the live setup is preserved.
+- **Acquisition keeps running** in the background — measurements continue
+  to be collected and logged.  Only the *display* in the plots changes.
+- Switching back to **Live** restores real-time plotting immediately.
 
-A modular Python desktop application consisting of four layers:
+The viewer is read-only – it never modifies log files.
 
-## 1. Device Drivers
-One class per physical device type.
-Responsible only for:
-- serial communication,
-- command protocol,
-- parsing responses,
-- connection state.
+## Constraints
 
-No GUI logic or plotting logic.
+### Must
 
----
+- Use **pyqtgraph** for plotting (same library as live plots, same `PlotWidget`).
+- Reuse the existing `PlotWidget` instances — no new plot panels.
+- Mode toggle in the **main toolbar** (`MainWindow._build_toolbar`).
+- Log-file controls (file picker, time range, x-axis mode) appear in the
+  toolbar only when "View Log" mode is active.
+- Follow the dark Fusion theme via `src/gui/theme.py`.
+- Parse the existing CSV format produced by `DataLogger`
+  (`logs/YYYY-MM-DD_<device_id>.csv` with ISO‑8601 timestamps in column 0).
+- Run file I/O and parsing in a **worker thread**; GUI updates via
+  Qt signals/slots.
+- **Acquisition must keep running** in "View Log" mode — the engine is
+  not stopped, the `DataStore` still receives data, and the `DataLogger`
+  still writes CSV files.
 
-## 2. Acquisition Engine
-Background worker system that:
-- polls all active devices,
-- handles reconnects,
-- timestamps measurements,
-- publishes updates to the shared data model.
+### Must Not
 
----
+- No new Python dependencies (use `csv` from stdlib).
+- Don't modify `DataLogger`, `DataStore`, `AcquisitionEngine`, or the
+  live `PlotWidget`'s internal rendering logic.
+- Don't block the GUI thread during file loading.
+- Don't create new dock panels — reuse existing plots.
+- Don't stop acquisition when switching modes.
 
-## 3. Shared Data Model
-Thread-safe central storage for:
-- latest measurements,
-- rolling time-series buffers,
-- device status,
-- events and alarms.
+### Out of Scope
 
-Acts as the communication layer between hardware and GUI.
+- Editing or re-exporting log files.
+- Comparing multiple log files simultaneously (one file at a time for V1).
+- Real-time log tailing (the viewer loads a static snapshot).
+- Statistical overlays (mean, std-dev, etc.).
+- Multi-device log viewing — each `PlotWidget` shows data for its
+  currently selected device (from the widget's own device dropdown).
 
----
+## Current State
 
-## 4. GUI Application
-PySide6 desktop application with:
-- dockable/rearrangeable panels,
-- real-time plots,
-- live device values,
-- configurable channel selection,
-- future extensibility for controls and automation.
+### CSV Log Format
 
-GUI must never directly communicate with serial ports.
-
----
-
-# Constraints
-
-## Must
-
-### Platform
-- Python 3.10+
-- Windows 11
-
-### GUI
-- PySide6 (Qt6)
-- pyqtgraph for plotting
-- Qt dock widget system for rearrangeable panels
-- Dark Fusion-style theme optimized for laboratory use
-
-### Communication
-- pyserial for COM-port communication
-- Multiple COM ports simultaneously
-- Graceful disconnect/reconnect handling
-- Automatic reconnect attempts
-- Per-device configurable polling intervals
-- RS232 protocol is used for the VCU
-
-### Architecture
-- One device class per physical device
-- All device classes inherit from `BaseDevice`
-- Device drivers isolated from GUI logic
-- GUI updates only through Qt signals/slots
-- Serial communication only in worker threads
-- Thread-safe shared data model
-- No blocking serial operations in GUI thread
-- Rolling data buffers with configurable size limits
-- Event-driven architecture between acquisition and GUI
-
-### Configuration
-- JSON or YAML configuration files
-- Persistent GUI layout restoration
-- Persistent device configuration
-- Persistent plot configuration
-
-### Logging
-- All measurement logs must be stored as CSV files
-- One CSV log file per calendar day
-- Automatic daily log rotation at midnight
-- File naming format:
-  logs/YYYY-MM-DD_<device_name>.csv
-- CSV headers must include:
-  - timestamp
-  - channel names
-  - measurement units
-- Logging must continue seamlessly across day changes
-- Files must be flushed safely during runtime to minimize data loss on crash
-
----
-
-## Must Not
-
-- No hardcoded COM ports
-- No hardcoded device addresses
-- No global singleton device manager
-- No GUI access directly to serial ports
-- No external databases
-- No polling from GUI widgets
-- No unbounded memory growth for plots/logging
-
----
-
-## Out of Scope
-
-- Analog IO
-- Digital relay control
-- PID loops
-- Recipe sequencing
-- Web interface
-- Distributed networking
-- PLC integration
-- Real-time OS support
-
----
-
-# Threading Rules
-
-- One worker thread per active device
-- Serial communication occurs only inside worker threads
-- GUI updates occur only in Qt main thread
-- Inter-thread communication uses Qt signals/slots
-- Device drivers are not thread-safe unless explicitly stated
-- Acquisition engine owns all polling scheduling
-- GUI must remain responsive during device failure or timeout
-
----
-
-# Architecture
+Produced by `src/data_logging/data_logger.py`.  One file per device per day.
 
 ```text
-+--------------------+
-|      GUI Layer     |
-|  plots / controls  |
-+--------------------+
-           ↑
-           ↓ Qt signals/slots
-+--------------------+
-| Shared Data Model  |
-| latest + history   |
-+--------------------+
-           ↑
-           ↓ events
-+--------------------+
-| Acquisition Engine |
-| polling/reconnect  |
-+--------------------+
-           ↑
-           ↓
-+--------------------+
-|  Device Drivers    |
-| serial protocols   |
-+--------------------+
-````
-
----
-
-# Current State
-
-## Project Root
-
-```text
-C:\Users\Robin\...\Sputter-Automation-2
+logs/2026-05-21_VCU-0.csv
 ```
 
-## Existing Files
+| Column | Example value |
+|--------|---------------|
+| 0 – `timestamp` | `2026-05-21T15:30:00.123456+02:00` |
+| 1 – `ch1_pressure [mbar]` | `1.23e-05` |
+| 2 – `ch1_status_code` | `0` |
+| 3 – `ch2_pressure [mbar]` | `5.67e-04` |
+| 4 – `ch2_status_code` | `0` |
+| … | … |
 
-```text
-Infos/
-├── Spec template.md
-└── JEVAmet VCU manual.pdf
+- Timestamps are **ISO‑8601 with timezone offset** (local time).
+- Pressure columns embed the unit in brackets (`[mbar]`).
+- Status columns are plain integers.
+- Rows are written in chronological order but the parser must not assume
+  sorted data – it should sort after loading.
+
+### Toolbar Layout (current `_build_toolbar`)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ▶ Start │ ■ Stop │ ⚡ Connect All │ ⏻ Disconnect All │      │
+│ 📊 Add Plot │ ♻ Clear All                                  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Current Hardware
+### Toolbar Layout (after this feature)
 
-First device to integrate:
-
-* JEVAmet VCU vacuum pressure controller
-
-No production Python code exists yet.
-
----
-
-# JEVAmet VCU Protocol Summary
-
-| Parameter        | Value                |
-| ---------------- | -------------------- |
-| Interface        | RS232 / RS485        |
-| Baud rates       | 9600 / 19200 / 38400 |
-| Data bits        | 8                    |
-| Stop bits        | 1                    |
-| Parity           | None                 |
-| Flow control     | None                 |
-| Encoding         | ASCII                |
-| Delimiter        | Comma (0x2C)         |
-| Termination      | <CR>                 |
-| RS485 addressing | 1-126                |
-
----
-
-# String Structure
-
-```text
-Write:
-[Address] Command , [Parameter] <CR>
-
-Response:
-OK <CR>
-
-Read:
-[Address] Command <CR>
-
-Response:
-[Parameter] <CR>
-
-Error:
-? <TAB> X <TAB> [...]
+```
+┌─────────────────────────────────────────────────────────────┐
+│ ▶ Start │ ■ Stop │ ⚡ Connect All │ ⏻ Disconnect All │      │
+│ ⬤ Live │ 📂 [2026-05-21_VCU-0.csv] │ From: [14:00]  │      │
+│ To: [16:00] │ X-axis: [Seconds ▾] │ 📊 Add Plot │ ♻ Clear   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Where:
+The log-file controls (file label, time range, x-axis mode) are **hidden**
+when in "Live" mode and **shown** when in "View Log" mode.
 
-* I = invalid command
-* P = invalid parameter
-* C = checksum error
-* S = syntax error
-* K = communication timeout
+### Existing PlotWidget Architecture
 
----
+The live `PlotWidget` (`src/gui/plot_widget.py`) renders data from a
+`deque` buffer.  Data arrives via `push_data(device_id, timestamp, data)`
+which is called from `DataStore`'s subscription system.  The key rendering
+path is:
 
-# Important VCU Commands
-
-| Command  | Description           |
-| -------- | --------------------- |
-| RPV[a]   | Read pressure         |
-| RID[a]   | Read sensor ID        |
-| RVN      | Read firmware version |
-| RSS      | Read setpoint status  |
-| SHV[a,b] | HV on/off             |
-| SDG[a,b] | Degas on/off          |
-| SAC      | Save config           |
-
----
-
-# Pressure Status Codes
-
-| Code | Meaning            |
-| ---- | ------------------ |
-| 0    | OK                 |
-| 1    | Below range        |
-| 2    | Above range        |
-| 3    | Err Lo             |
-| 4    | Err Hi             |
-| 5    | Sensor off         |
-| 6    | HV on              |
-| 7    | Sensor error       |
-| 8    | BA error           |
-| 9    | No sensor          |
-| 10   | No trigger         |
-| 11   | Pressure error     |
-| 12   | Pirani error       |
-| 13   | 24V error          |
-| 15   | Filament defective |
-
----
-
-# Sensor IDs
-
-| ID | Sensor |
-| -- | ------ |
-| 0  | none   |
-| 1  | Ptr    |
-| 2  | ttr1   |
-| 3  | ttr    |
-| 4  | Ctr    |
-| 5  | bA     |
-| 6  | bEE    |
-| 7  | At     |
-| 8  | Ptr90  |
-| 9  | du200  |
-| 10 | du2000 |
-| 11 | durEL  |
-
----
-
-# Device Driver Requirements
-
-Each device driver must expose:
-
-* available channels
-* units
-* polling capabilities
-* supported commands
-* writable parameters
-* connection status
-* identification information
-
-Device drivers should prefer composition over inheritance except for `BaseDevice`.
-
----
-
-# Tasks
-
-## T1 — Project Structure & BaseDevice
-
-### What
-
-Create:
-
-* project structure,
-* virtual environment setup,
-* BaseDevice abstraction,
-* serial management,
-* reconnect logic,
-* configuration loader.
-
-### Files
-
-```text
-src/
-├── main.py
-├── config.py
-├── devices/
-│   ├── __init__.py
-│   └── base_device.py
+```
+DataStore._on_update() → plot.push_data() → signal → _on_data_arrived()
+  → buffer append → _update_curve() → curve.setData(xs, ys)
 ```
 
-### Verify
+The log-viewer mode needs to **bypass this pipeline**: instead of buffering
+from `push_data`, the plot should display pre-loaded CSV data directly.
 
-```bash
-python -c "from src.devices.base_device import BaseDevice; print('OK')"
-```
+### Relevant Files
 
----
+| File | Role |
+|------|------|
+| `src/gui/main_window.py` | Toolbar (`_build_toolbar`), mode toggle, log controls. |
+| `src/gui/plot_widget.py` | Existing plot — needs a `load_log_data()` method. |
+| `src/gui/dock_manager.py` | Adds/removes `QDockWidget` panels. |
+| `src/gui/plot_config_dialog.py` | Channel/colour/visibility dialog (already used by plots). |
+| `src/gui/theme.py` | Dark/light Fusion palette. |
+| `src/data_logging/data_logger.py` | Produces the CSV files we need to read. |
+| `src/config.py` | Device config access (`find_device_config`, `get_device_configs`). |
+| `src/devices/device_manager.py` | Wires panels → orchestrates mode switch. |
+| `src/main.py` | Entry point — passes config to MainWindow/DeviceManager. |
 
-## T2 — JEVAmet VCU Driver
+## Tasks
 
-### What
+### T1 — CSV Parser & Data Model
 
-Implement:
+**What:** A pure-data module that reads a CSV log file, extracts headers,
+parses timestamps, and returns a structured in-memory representation
+suitable for plotting.
 
-* full protocol handling,
-* pressure polling,
-* pressure status,
-* pressure units,
-* timeout handling,
-* reconnect handling,
-* command parsing.
-* only implement read functions, don't implement write functions.
+**Details:**
+- Class `LogFileReader` in `src/data_logging/log_reader.py`.
+- `read(filepath: str) -> LogData`:
+  - Opens CSV, reads headers from row 1.
+  - Parses every subsequent row: `datetime.fromisoformat(ts_str)` for
+    column 0, `float` for numeric columns, skip non-numeric.
+  - Sorts rows by timestamp ascending.
+  - Returns a `LogData` dataclass with:
+    - `headers: List[str]` (original CSV column names).
+    - `timestamps: List[datetime]` (sorted).
+    - `values: Dict[str, List[float]]` (column-name → parallel list).
+    - `filepath: str`, `device_id: str`, `date: str`.
+- Run file I/O in a worker thread; emit result via a Qt Signal.
 
-### Files
+**Files:** `src/data_logging/log_reader.py`, `tests/test_log_reader.py`
 
-```text
-src/devices/vcu_controller.py
-tests/test_vcu_controller.py
-```
-
-### Verify
-
-Try to connect to a VCU at COM6. Expected behavior: No device found.
-
----
-
-## T3 — Acquisition Engine
-
-### What
-
-Implement:
-
-* one worker thread per device,
-* polling scheduler,
-* reconnect handling,
-* event publishing,
-* timestamping.
-
-### Files
-
-```text
-src/acquisition/
-├── __init__.py
-└── engine.py
-```
-
-### Verify
-
-Mock-device integration test.
+**Verify:** `python -m unittest tests.test_log_reader -v` (all parsing tests pass)
 
 ---
 
-## T4 — Shared Data Model
+### T2 — PlotWidget: `load_log_data()` Method
 
-### What
+**What:** Add a method to `PlotWidget` that replaces the live buffer
+with pre-loaded CSV data and re-renders all curves.
 
-Implement:
+**Details:**
+- Method `load_log_data(log_data: LogData, t_range_start: datetime, t_range_end: datetime)`:
+  - Clears all existing buffers (`_buffers`).
+  - For each channel in `_channels`, looks up matching values in
+    `log_data.values` (by column name matching, e.g. `ch1_pressure [mbar]`).
+  - Converts timestamps to x-values:
+    - Relative mode: `x = (t - t_range_start).total_seconds()`
+    - Absolute mode: `x = (t - epoch_start).timestamp()` (or similar numeric)
+  - Applies **gap detection** (> 60 s breaks the curve into separate
+    `PlotDataItem` segments – see T3).
+  - Calls `curve.setData(xs, ys)` for visible channels; sets `[]` for
+    hidden channels.
+  - Updates the x-axis label ("Time (s)" or "HH:MM:SS").
+- Method `clear_log_data()`:
+  - Clears all curves to `[]`.
+  - Re-enables live data buffering (resumes `push_data` → `_on_data_arrived`).
+- A flag `_log_mode: bool = False` toggles whether `push_data` is
+  processed or ignored.  When `_log_mode` is True, `_on_data_arrived`
+  returns early without buffering.
+- The existing `_update_curve` method continues to work for live data;
+  log data bypasses it and writes directly to the curves.
 
-* thread-safe measurement store,
-* rolling buffers,
-* event system,
-* subscription mechanism.
+**Files:** `src/gui/plot_widget.py`
 
-### Files
-
-```text
-src/data/
-├── __init__.py
-└── datastore.py
-```
-
-### Verify
-
-Multiple readers/writers operate safely.
-
----
-
-## T5 — Main GUI Window
-
-### What
-
-Implement:
-
-* main Qt window,
-* dock system,
-* toolbar,
-* status bar,
-* dark theme,
-* persistent layouts.
-
-### Files
-
-```text
-src/gui/
-├── main_window.py
-├── theme.py
-└── dock_manager.py
-```
-
-### Verify
-
-```bash
-python src/main.py
-```
-
-GUI launches successfully.
+**Verify:** Manual check — call `load_log_data()` with test data, verify
+curves render correctly.  Call `clear_log_data()`, verify live data resumes.
 
 ---
 
-## T6 — Plot Widget
+### T3 — Gap Detection & Curve Rendering
 
-### What
+**What:** When rendering loaded CSV data, detect gaps > 60 s between
+consecutive timestamps and split the curve into separate `PlotDataItem`
+segments so no connecting line is drawn across the gap.
 
-Implement:
+**Details:**
+- Function `_split_into_segments(xs, ys, gap_threshold_s=60.0)` returns
+  a list of `(x_segment, y_segment)` tuples.
+- Each segment is a contiguous block where consecutive x-differences
+  are ≤ `gap_threshold_s`.
+- In `load_log_data`, for each channel:
+  - Split the data into segments.
+  - Clear existing `PlotDataItem` curves for that channel.
+  - Create one `pg.PlotDataItem` per segment (or one if no gaps).
+  - Each segment uses `connect="all"` (the default).
+  - Pyqtgraph does **not** connect across separate `PlotDataItem`
+    instances, so gaps appear automatically.
+- The legend should show only one entry per channel (not one per segment).
+  Achieve this by setting `name=` on the first segment only, `name=None`
+  on subsequent segments.
 
-* pyqtgraph plots,
-* dynamic trace selection,
-* rolling history,
-* autoscaling,
-* configurable channels.
+**Files:** `src/gui/plot_widget.py` (helper in same file, or separate utility)
 
-### Files
-
-```text
-src/gui/plot_widget.py
-src/gui/plot_config_dialog.py
-```
-
-### Verify
-
-Live plot updates correctly.
-
----
-
-## T7 — Device Panels
-
-### What
-
-Implement:
-
-* live values,
-* connection status,
-* controls,
-* per-device widgets.
-
-### Files
-
-```text
-src/gui/device_panel.py
-```
-
-### Verify
-
-Device values update in real time.
+**Verify:** Manual check with CSV that has intentional 120 s gaps — verify
+no line crosses the gap.
 
 ---
 
-## T8 — Configuration Persistence
+### T4 — Toolbar Mode Toggle & Log Controls
 
-### What
+**What:** Add a mode toggle button and log-file controls to the main
+toolbar in `MainWindow`.  `DeviceManager` orchestrates the mode switch.
 
-Implement:
+**Details:**
 
-* JSON config loading,
-* GUI state restore,
-* COM-port persistence,
-* plot persistence.
+**MainWindow toolbar additions (`_build_toolbar`):**
 
-### Files
+- After the existing separator (after Disconnect All), add:
+  - **Mode toggle**: `QPushButton` (checkable) with text "⬤ Live" (unchecked)
+    / "⬤ View Log" (checked).  Styled distinctly (e.g. green/blue when
+    live, orange/amber when viewing log).
+  - **File label**: `QLabel` showing the loaded file name or "No file".
+    Hidden in Live mode.
+  - **Load button**: `QPushButton` "📂 Load…" — opens `QFileDialog`.
+    Hidden in Live mode.
+  - **From / To**: two `QDateTimeEdit` widgets.  Hidden in Live mode.
+  - **X-axis mode**: `QComboBox` with "Seconds from start" and "HH:MM:SS".
+    Hidden in Live mode.
 
-```text
-src/config.py
-config.json
-```
+- All log controls are hidden/shown via `setVisible()` when the mode
+  toggle changes state.
 
-### Verify
+**DeviceManager mode orchestration:**
 
-Restart restores layout and configuration.
+- Method `set_view_mode(live: bool)`:
+  - If `live=False` (View Log mode): pauses plot subscriptions
+    (plots stop receiving live `push_data` calls), loads the selected CSV
+    via `LogFileReader` (worker thread), calls `plot.load_log_data()` on
+    each plot.
+  - If `live=True` (Live mode): calls `plot.clear_log_data()` on each
+    plot, resumes subscriptions.
+  - Updates the toolbar visibility.
+- The mode toggle's `toggled` signal connects to `set_view_mode`.
+- The Load button triggers a `QFileDialog` filtered to `logs/*.csv`,
+  then calls `_load_log_file(path)` which does the worker-thread read.
 
----
+**Files:** `src/gui/main_window.py`, `src/devices/device_manager.py`
 
-## T9 — Data Logging
-
-### What
-
-Implement:
-
-* CSV logging,
-* daily rotation,
-* metadata headers,
-* buffered writes.
-
-### Files
-
-```text
-src/logging/data_logger.py
-```
-
-### Verify
-
-CSV logs contain correct timestamps and units.
-
----
-
-## T10 — Device Manager
-
-### What
-
-Implement:
-
-* central device registry,
-* auto-detection,
-* connection management,
-* device discovery.
-
-### Files
-
-```text
-src/devices/device_manager.py
-```
-
-### Verify
-
-Detected devices appear automatically.
+**Verify:** `python src/main.py` → click mode toggle → log controls appear.
+Click Load → select a CSV → plots render the log data.  Toggle back to Live →
+plots show live data again.  Acquisition status bar still shows "Running".
 
 ---
 
-# Validation
+### T5 — X-Axis Mode Switching
 
-## Functional
+**What:** The x-axis mode combo switches between relative seconds and
+absolute wall-clock time (`HH:MM:SS`).
 
-* GUI launches successfully
-* Real VCU connects through USB-serial
-* Live pressure plotting works
-* Multiple plots update simultaneously
-* Dynamic panel creation/removal works
-* Device disconnect/reconnect handled gracefully
-* Layout restores after restart
-* CSV logging works continuously
+**Details:**
+- For **relative mode**: x = seconds since the start of the selected time
+  range.  Axis label: "Time (s)".
+- For **absolute mode**: x = raw numeric timestamps, but the axis tick
+  labels are formatted as `HH:MM:SS`.  Achieved via a custom
+  `AxisItem` subclass that overrides `tickStrings()`.
+- Switching modes triggers a re-render of all curves (calling
+  `load_log_data` with the current time range but new x-axis mode).
+- The x-axis mode combo is only visible in "View Log" mode.
+
+**Files:** `src/gui/plot_widget.py` (custom `TimeAxisItem`), `src/devices/device_manager.py`
+
+**Verify:** Load a CSV in View Log mode.  Switch x-axis mode — tick labels
+change between seconds and `HH:MM:SS`.  Verify the curves remain correct.
 
 ---
 
-## Performance
+### T6 — Tests
 
-* GUI remains responsive at 10 Hz polling
-* Supports minimum 5 simultaneous devices
-* Plot latency < 200 ms
-* No unbounded memory growth
-* Stable during 24 h runtime
+**What:** Unit tests for the CSV parser (T1) and gap detection (T3).
 
+**Details:**
+- `tests/test_log_reader.py`:
+  - `test_parse_valid_csv` — correct headers, timestamps, values.
+  - `test_missing_file` — graceful error (exception or error result).
+  - `test_empty_csv` — only headers, no data rows.
+  - `test_unsorted_timestamps` — output is sorted ascending.
+  - `test_non_numeric_columns_skipped` — text columns are ignored.
+- `tests/test_log_viewer.py` (or inline in plot_widget tests):
+  - `test_split_into_segments` — two segments for 120 s gap, one for
+    contiguous data.
+  - `test_no_segments` — empty input returns empty list.
+
+**Files:** `tests/test_log_reader.py`
+
+**Verify:** `python -m unittest tests.test_log_reader -v` (all pass)
+
+## Validation
+
+After all tasks complete, perform end-to-end verification:
+
+1. `python -m unittest tests.test_log_reader tests.test_datastore
+   tests.test_acquisition_engine tests.test_vcu_controller
+   tests.test_data_logger -v` → all tests pass.
+2. `python src/main.py` → start acquisition (▶ Start).
+3. Verify live plots are showing real-time data.
+4. Click mode toggle → "⬤ View Log" (checked).
+5. Verify log controls appear in the toolbar (Load, From, To, X-axis).
+6. Click **📂 Load…** → select `logs/2026-05-21_VCU-0.csv`.
+7. Verify plots render CSV data with correct channel colours and legend.
+8. Verify the status bar still shows "Running" (acquisition continues).
+9. Toggle a channel off via the plot's **Channels** button → its curve
+   disappears (same behaviour as live mode).
+10. Adjust time range via `QDateTimeEdit` → curves update.
+11. Switch x-axis mode to `HH:MM:SS` → tick labels show wall-clock time.
+12. Verify gaps > 60 s show as broken lines (no connector).
+13. Click mode toggle back to "Live" → plots resume showing live data.
+14. Close and reopen the app → the mode toggle and dock layout are
+    restored.
