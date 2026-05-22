@@ -1,342 +1,380 @@
-# Log Viewer – Historical Data Browser
+# INFICON SQM-160 QCM Deposition Monitor – Read-Only Serial Driver
 
 ## Why
 
-Users need to review past measurement runs without leaving the application.
-Currently, CSV log files accumulate in the `logs/` directory but can only be
-inspected with external tools (Excel, VS Code, etc.).  A built-in viewer lets
-operators correlate pressure curves with process events, zoom into specific
-time windows, and export or screenshot findings – all within the familiar
-dark-themed lab UI.
+The SQM-160 quartz crystal microbalance monitors the rate, thickness, and
+frequency of deposition processes on up to six sensor channels. Currently only
+the VCU pressure controller is supported. Adding the SQM-160 lets operators
+correlate pressure curves (VCU) with deposition data (SQM-160) side by side
+in real time — rate drops, thickness plateaus, and crystal health all become
+visible in the existing plot panels.
 
 ## What
 
-An **application-wide mode toggle** in the main toolbar that switches all
-existing plot panels between **Live** (real-time data from `DataStore`) and
-**View Log** (historical data from a CSV file).
-
-- **Toggle button** in the toolbar: "Live" | "View Log"
-- When switched to **View Log**, the toolbar reveals additional controls:
-  log file picker, time-range widgets, and x-axis mode toggle.
-- **No new panels** — the existing `PlotWidget` instances render the CSV
-  data instead of live data.  Channel configuration (checkboxes, colours,
-  visibility) from the live setup is preserved.
-- **Acquisition keeps running** in the background — measurements continue
-  to be collected and logged.  Only the *display* in the plots changes.
-- Switching back to **Live** restores real-time plotting immediately.
-
-The viewer is read-only – it never modifies log files.
+A new **read-only** device driver that speaks the INFICON binary-like packet
+protocol over RS-232. The driver polls all configured sensor channels with a
+single `W` command and exposes rate, thickness, and frequency as named
+channels to `DataStore`, making them plottable immediately.
 
 ## Constraints
 
 ### Must
 
-- Use **pyqtgraph** for plotting (same library as live plots, same `PlotWidget`).
-- Reuse the existing `PlotWidget` instances — no new plot panels.
-- Mode toggle in the **main toolbar** (`MainWindow._build_toolbar`).
-- Log-file controls (file picker, time range, x-axis mode) appear in the
-  toolbar only when "View Log" mode is active.
-- Follow the dark Fusion theme via `src/gui/theme.py`.
-- Parse the existing CSV format produced by `DataLogger`
-  (`logs/YYYY-MM-DD_<device_id>.csv` with ISO‑8601 timestamps in column 0).
-- Run file I/O and parsing in a **worker thread**; GUI updates via
-  Qt signals/slots.
-- **Acquisition must keep running** in "View Log" mode — the engine is
-  not stopped, the `DataStore` still receives data, and the `DataLogger`
-  still writes CSV files.
+- Inherit from `BaseDevice` and fit the existing `config.json` → device
+  factory → `DeviceManager` pattern used by `VCUController`.
+- Implement the full SQM-160 packet protocol:
+  - Sync: `!` (ASCII 33)
+  - Command packet length: `char_count + 34`
+  - Response packet length: `char_count + 35`
+  - CRC14 with init `0x3FFF`, XOR-each-byte, 8×shift-right, conditional XOR
+    `0x2001`, mask `0x3FFF`, split into CRC1 (bits 0–6 + 34) and CRC2
+    (bits 7–13 + 34).
+- Poll via the `W` command (one packet → all six channels' rate, thickness,
+  frequency) — not per-channel `L`/`N`/`P` commands.
+- Parse the `W` response correctly (note: first `00.00` value in the response
+  is a dummy and must be ignored, per the manual).
+- RS-232, 8 data bits, 1 stop bit, no parity. Default baud 19 200,
+  configurable 2 400–115 200.
+- Handle timeout / bad CRC / invalid-command responses with custom exceptions
+  and automatic reconnection via `BaseDevice._reconnect_worker`.
 
 ### Must Not
 
-- No new Python dependencies (use `csv` from stdlib).
-- Don't modify `DataLogger`, `DataStore`, `AcquisitionEngine`, or the
-  live `PlotWidget`'s internal rendering logic.
-- Don't block the GUI thread during file loading.
-- Don't create new dock panels — reuse existing plots.
-- Don't stop acquisition when switching modes.
+- No control commands (shutter, zero, parameter updates) — read-only for V1.
+- Don't modify `BaseDevice` core logic. The SQM-160 does **not** use
+  ASCII + `\r` + readline; the driver must bypass `_send_command` and
+  use `_write` / `_serial.read()` directly.
+- No new Python dependencies (use `struct` and `pyserial`; CRC is
+  self-contained).
+- Don't break the existing VCU driver or acquisition pipeline.
 
 ### Out of Scope
 
-- Editing or re-exporting log files.
-- Comparing multiple log files simultaneously (one file at a time for V1).
-- Real-time log tailing (the viewer loads a static snapshot).
-- Statistical overlays (mean, std-dev, etc.).
-- Multi-device log viewing — each `PlotWidget` shows data for its
-  currently selected device (from the widget's own device dropdown).
+- Setting film parameters, active film selection, or any write/update
+  commands (`A`, `B`, `C`, `D`, `Z`).
+- Shutter control (`U`), zeroing (`S`, `T`), or relay I/O.
+- Ethernet / USB connectivity (RS-232 only for V1).
+- Simulate mode or etch-mode support.
+- Multiple SQM-160 units on the same serial bus (one device per port).
 
 ## Current State
 
-### CSV Log Format
-
-Produced by `src/data_logging/data_logger.py`.  One file per device per day.
-
-```text
-logs/2026-05-21_VCU-0.csv
-```
-
-| Column | Example value |
-|--------|---------------|
-| 0 – `timestamp` | `2026-05-21T15:30:00.123456+02:00` |
-| 1 – `ch1_pressure [mbar]` | `1.23e-05` |
-| 2 – `ch1_status_code` | `0` |
-| 3 – `ch2_pressure [mbar]` | `5.67e-04` |
-| 4 – `ch2_status_code` | `0` |
-| … | … |
-
-- Timestamps are **ISO‑8601 with timezone offset** (local time).
-- Pressure columns embed the unit in brackets (`[mbar]`).
-- Status columns are plain integers.
-- Rows are written in chronological order but the parser must not assume
-  sorted data – it should sort after loading.
-
-### Toolbar Layout (current `_build_toolbar`)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ ▶ Start │ ■ Stop │ ⚡ Connect All │ ⏻ Disconnect All │      │
-│ 📊 Add Plot │ ♻ Clear All                                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Toolbar Layout (after this feature)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ ▶ Start │ ■ Stop │ ⚡ Connect All │ ⏻ Disconnect All │      │
-│ ⬤ Live │ 📂 [2026-05-21_VCU-0.csv] │ From: [14:00]  │      │
-│ To: [16:00] │ X-axis: [Seconds ▾] │ 📊 Add Plot │ ♻ Clear   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-The log-file controls (file label, time range, x-axis mode) are **hidden**
-when in "Live" mode and **shown** when in "View Log" mode.
-
-### Existing PlotWidget Architecture
-
-The live `PlotWidget` (`src/gui/plot_widget.py`) renders data from a
-`deque` buffer.  Data arrives via `push_data(device_id, timestamp, data)`
-which is called from `DataStore`'s subscription system.  The key rendering
-path is:
-
-```
-DataStore._on_update() → plot.push_data() → signal → _on_data_arrived()
-  → buffer append → _update_curve() → curve.setData(xs, ys)
-```
-
-The log-viewer mode needs to **bypass this pipeline**: instead of buffering
-from `push_data`, the plot should display pre-loaded CSV data directly.
-
-### Relevant Files
+### Existing Device Architecture
 
 | File | Role |
 |------|------|
-| `src/gui/main_window.py` | Toolbar (`_build_toolbar`), mode toggle, log controls. |
-| `src/gui/plot_widget.py` | Existing plot — needs a `load_log_data()` method. |
-| `src/gui/dock_manager.py` | Adds/removes `QDockWidget` panels. |
-| `src/gui/plot_config_dialog.py` | Channel/colour/visibility dialog (already used by plots). |
-| `src/gui/theme.py` | Dark/light Fusion palette. |
-| `src/data_logging/data_logger.py` | Produces the CSV files we need to read. |
-| `src/config.py` | Device config access (`find_device_config`, `get_device_configs`). |
-| `src/devices/device_manager.py` | Wires panels → orchestrates mode switch. |
-| `src/main.py` | Entry point — passes config to MainWindow/DeviceManager. |
+| `src/devices/base_device.py` | Abstract base: serial open/close, reconnect loop, `_write`, thread safety. |
+| `src/devices/vcu_controller.py` | Read-only RS-232 driver for VCU pressure controller. ASCII line protocol, `_send_command`. |
+| `src/devices/device_manager.py` | Creates devices from config entries, wires them to plots and `DataStore`. |
+| `src/config.py` | `config.json` loader/saver; `get_device_configs`, `find_device_config`. |
+| `src/data/datastore.py` | Central data hub; subscribes plots to device channels. |
+| `src/acquisition/engine.py` | Calls `device.poll()` on a timer, pushes results to `DataStore`. |
+
+### Existing Pattern: VCUController
+
+```python
+class VCUController(BaseDevice):
+    def __init__(self, config): ...       # reads config dict
+    @property
+    def device_id(self) -> str: ...       # "VCU-0"
+    @property
+    def channels(self) -> list[str]: ...  # ["pressure", "status_code", ...]
+    def poll(self) -> Dict[...]: ...      # called by AcquisitionEngine
+    def _after_connect(self): ...         # read sensor ID, firmware
+```
+
+The SQM driver follows the same interface — `channels`, `poll()`,
+`_after_connect()` — but replaces `_send_command`'s ASCII-line logic with
+binary packet framing.
+
+### SQM-160 Protocol Summary (from Operating Manual pp. 63–83)
+
+**Physical layer:** RS-232, 8N1, 9-pin female D-sub (DCE). Default 19 200 bps.
+
+**Command packet** (host → instrument):
+```
+! <Length> <Message> <CRC1> <CRC2>
+```
+- `!` = Sync (ASCII 33), resets packet framing
+- `Length` = `len(message_bytes) + 34` (char)
+- `Message` = ASCII command string (e.g. `W`, `@`, `A1?`)
+- `CRC1`, `CRC2` = 14-bit CRC split into two 7-bit halves, each + 34
+
+**Response packet** (instrument → host):
+```
+! <Length> <Status> <Message> <CRC1> <CRC2>
+```
+- `Length` = `len(status_byte + message_bytes) + 35` (note: +35, not +34!)
+- `Status`: `A` = OK, `C` = invalid command, `D` = bad data
+- Message may include leading `A` (the status echoed in the payload — see examples)
+
+**CRC14 algorithm:**
+1. Init CRC register (16-bit) to `0x3FFF`
+2. For each byte in `Length + Message` (not Sync, not CRCs):
+   - XOR byte with CRC's LSB, store back in LSB
+   - Repeat 8 times:
+     - Save LSB of CRC as `Cy`
+     - Shift CRC right 1 bit, 0 into MSB
+     - If `Cy == 1`: CRC = CRC XOR `0x2001`
+3. CRC = CRC AND `0x3FFF` (keep 14 bits)
+4. CRC1 = `(CRC & 0x7F) + 34` (bits 0–6)
+5. CRC2 = `((CRC >> 7) & 0x7F) + 34` (bits 7–13)
+
+**Key commands for monitoring:**
+
+| Cmd | Type | Description | Example Response |
+|-----|------|-------------|-----------------|
+| `@` | Query | Firmware version | `AMON_Ver_4.13` |
+| `J` | Query | Number of channels (2 or 6) | `A6` |
+| `W` | Status | Rate, thickness, frequency for all 6 sensors | `A00.00_07.10_3076.190_5497894.642_...` |
+| `L` | Status | Rate for one sensor | `A_0.00_` |
+| `N` | Status | Thickness for one sensor | `A_0.000_` |
+| `P` | Status | Frequency for one sensor | `A5500110.056` |
+
+**W command response format** (the preferred polling command):
+```
+A<dummy>_<ch1_rate>_<ch1_thickness>_<ch1_freq>_<ch2_rate>_<ch2_thickness>_<ch2_freq>_..._<ch6_rate>_<ch6_thickness>_<ch6_freq>
+```
+- The first `00.00` after `A` is a dummy — ignore it (manual says so).
+- Rate: `Å/s` or `nm/s` depending on display mode (units from System 1 params).
+- Thickness: `kÅ` or `µm` depending on display mode.
+- Frequency: `Hz` with up to 3 decimal places.
+- Underscore (`_`) is the separator.
+- Inactive channels return `00.00_00.000_<freq>` (frequency is always reported).
+
+### Channel Model
+
+The SQM-160 provides up to 6 sensor channels. Each sensor reports three
+values: **rate**, **thickness**, and **frequency**. The driver exposes these
+as flat named channels:
+
+| Channel key | Description | Typical unit |
+|-------------|-------------|-------------|
+| `ch1_rate` | Sensor 1 deposition rate | Å/s |
+| `ch1_thickness` | Sensor 1 accumulated thickness | kÅ |
+| `ch1_frequency` | Sensor 1 crystal frequency | Hz |
+| `ch2_rate` | Sensor 2 deposition rate | Å/s |
+| … | … | … |
+| `chN_rate` | Sensor N rate (N = 1..`number_of_sensors`) | Å/s |
+
+The number of active sensors is configurable (default 2, max 6).
 
 ## Tasks
 
-### T1 — CSV Parser & Data Model
+### T1 — SQM Protocol Utility Module
 
-**What:** A pure-data module that reads a CSV log file, extracts headers,
-parses timestamps, and returns a structured in-memory representation
-suitable for plotting.
+**What:** Standalone stateless functions for CRC14 calculation, packet
+building, and packet parsing. This is pure logic with no serial I/O, making
+it easy to unit-test against the manual's examples.
 
 **Details:**
-- Class `LogFileReader` in `src/data_logging/log_reader.py`.
-- `read(filepath: str) -> LogData`:
-  - Opens CSV, reads headers from row 1.
-  - Parses every subsequent row: `datetime.fromisoformat(ts_str)` for
-    column 0, `float` for numeric columns, skip non-numeric.
-  - Sorts rows by timestamp ascending.
-  - Returns a `LogData` dataclass with:
-    - `headers: List[str]` (original CSV column names).
-    - `timestamps: List[datetime]` (sorted).
-    - `values: Dict[str, List[float]]` (column-name → parallel list).
-    - `filepath: str`, `device_id: str`, `date: str`.
-- Run file I/O in a worker thread; emit result via a Qt Signal.
+- `compute_crc14(data: bytes) -> Tuple[int, int]`:
+  - Implements the CRC14 algorithm exactly as specified (0x3FFF init,
+    XOR-each-byte, 8-bit shift loop, conditional 0x2001 XOR, 0x3FFF mask,
+    split into two 7-bit halves with +34 offset).
+  - Returns `(crc1, crc2)` as integers in range 34–161.
+  - Must reproduce the CRC values from the manual's command examples
+    (e.g. `!#J(79)(56)` → CRCs are 79 and 56).
+- `build_command_packet(command: str) -> bytes`:
+  - Encodes command as ASCII bytes.
+  - Computes Length = `len(command_bytes) + 34`.
+  - Builds: `b"!" + bytes([length]) + command_bytes + bytes([crc1, crc2])`.
+  - Returns the complete byte packet ready to write to serial.
+- `parse_response_packet(data: bytes) -> str`:
+  - Validates Sync (`!`), extracts Length (expected = `char_count + 35`).
+  - Extracts and validates CRC.
+  - Raises `SQMProtocolError` on CRC mismatch, invalid status, or framing
+    errors.
+  - Returns the response payload string (everything between Length and CRC,
+    including the status character).
 
-**Files:** `src/data_logging/log_reader.py`, `tests/test_log_reader.py`
+**Files:** `src/devices/sqm_protocol.py`, `tests/test_sqm_protocol.py`
 
-**Verify:** `python -m unittest tests.test_log_reader -v` (all parsing tests pass)
+**Verify:** `python -m unittest tests.test_sqm_protocol -v`
+- CRC must match at least 3 examples from the manual.
+- Packet built for `J` must be `b"!#J(79)(56)"` (or whatever CRCs the
+  algorithm computes — must match the manual's example).
+- Parse the manual's example `W` response → correct payload extracted.
 
 ---
 
-### T2 — PlotWidget: `load_log_data()` Method
+### T2 — SQMController Class (Construction + I/O)
 
-**What:** Add a method to `PlotWidget` that replaces the live buffer
-with pre-loaded CSV data and re-renders all curves.
+**What:** Create `SQMController(BaseDevice)` with serial read/write
+overriding the ASCII-line pattern. Uses the packet utility from T1.
 
 **Details:**
-- Method `load_log_data(log_data: LogData, t_range_start: datetime, t_range_end: datetime)`:
-  - Clears all existing buffers (`_buffers`).
-  - For each channel in `_channels`, looks up matching values in
-    `log_data.values` (by column name matching, e.g. `ch1_pressure [mbar]`).
-  - Converts timestamps to x-values:
-    - Relative mode: `x = (t - t_range_start).total_seconds()`
-    - Absolute mode: `x = (t - epoch_start).timestamp()` (or similar numeric)
-  - Applies **gap detection** (> 60 s breaks the curve into separate
-    `PlotDataItem` segments – see T3).
-  - Calls `curve.setData(xs, ys)` for visible channels; sets `[]` for
-    hidden channels.
-  - Updates the x-axis label ("Time (s)" or "HH:MM:SS").
-- Method `clear_log_data()`:
-  - Clears all curves to `[]`.
-  - Re-enables live data buffering (resumes `push_data` → `_on_data_arrived`).
-- A flag `_log_mode: bool = False` toggles whether `push_data` is
-  processed or ignored.  When `_log_mode` is True, `_on_data_arrived`
-  returns early without buffering.
-- The existing `_update_curve` method continues to work for live data;
-  log data bypasses it and writes directly to the curves.
+- `__init__(config)`:
+  - Calls `super().__init__(config)`.
+  - Reads `"number_of_sensors"` (default 2, max 6) from config.
+  - Builds `self._channels` list (e.g. `["ch1_rate", "ch1_thickness",
+    "ch1_frequency", "ch2_rate", ...]`).
+  - Initializes `self._version` and `self._num_channels` caches.
+- `device_id` property: returns `f"SQM-{config['address']}"` (address
+  defaults to 0, like VCU pattern).
+- `channels` property: returns the flat channel list.
+- `_sqm_send(command: str, timeout: float = 2.0) -> str`:
+  - Builds packet via `build_command_packet(command)`.
+  - Calls `self._write(packet)` (from BaseDevice).
+  - Reads response using a robust byte-by-byte reader:
+    1. Read until `!` sync byte (or timeout).
+    2. Read 1 byte for Length → compute `expected = (length_byte - 35)`.
+    3. Read `expected` bytes (message + status).
+    4. Read 2 bytes for CRC.
+  - Passes the complete frame to `parse_response_packet`.
+  - Returns the payload string.
+  - Raises `SQMProtocolError` on CRC mismatch or invalid status; lets
+    `TimeoutError` / `ConnectionError` propagate for the reconnect loop.
+- `_after_connect()`:
+  - Queries firmware version: `_sqm_send("@")` → log.
+  - Queries number of channels: `_sqm_send("J")` → log.
+  - Caches results.
 
-**Files:** `src/gui/plot_widget.py`
+**Files:** `src/devices/sqm_controller.py`
 
-**Verify:** Manual check — call `load_log_data()` with test data, verify
-curves render correctly.  Call `clear_log_data()`, verify live data resumes.
+**Verify:** `python -m unittest tests.test_sqm_controller -v`
+- With a mock serial, verify `_sqm_send("J")` writes the correct bytes and
+  returns `"A6"` for a 6-channel instrument.
+- Verify `_after_connect` populates `_version` and `_num_channels`.
+- Verify graceful handling of a bad-CRC response (SQMProtocolError raised).
 
 ---
 
-### T3 — Gap Detection & Curve Rendering
+### T3 — Implement poll() Using the W Command
 
-**What:** When rendering loaded CSV data, detect gaps > 60 s between
-consecutive timestamps and split the curve into separate `PlotDataItem`
-segments so no connecting line is drawn across the gap.
+**What:** Implement `poll()` to fetch all sensor data with one `W` command,
+parse the response, and return a flat `Dict[str, Any]`.
 
 **Details:**
-- Function `_split_into_segments(xs, ys, gap_threshold_s=60.0)` returns
-  a list of `(x_segment, y_segment)` tuples.
-- Each segment is a contiguous block where consecutive x-differences
-  are ≤ `gap_threshold_s`.
-- In `load_log_data`, for each channel:
-  - Split the data into segments.
-  - Clear existing `PlotDataItem` curves for that channel.
-  - Create one `pg.PlotDataItem` per segment (or one if no gaps).
-  - Each segment uses `connect="all"` (the default).
-  - Pyqtgraph does **not** connect across separate `PlotDataItem`
-    instances, so gaps appear automatically.
-- The legend should show only one entry per channel (not one per segment).
-  Achieve this by setting `name=` on the first segment only, `name=None`
-  on subsequent segments.
+- `poll() -> Dict[str, Any]`:
+  - Calls `resp = self._sqm_send("W")`.
+  - Splits the payload on `_` (underscore). Example payload:
+    `"A00.00_07.10_3076.190_5497894.642_07.10_3076.190_5498079.900_..."`
+  - Skips the first value after `A` (the dummy `00.00` as noted in the
+    manual, page 79).
+  - Groups remaining values into triplets per sensor:
+    `(rate, thickness, frequency)`.
+  - For sensor _N_ (1-indexed), creates keys:
+    - `ch{N}_rate` → float
+    - `ch{N}_thickness` → float
+    - `ch{N}_frequency` → float
+  - Only includes channels up to `self._number_of_sensors`.
+  - Returns the flat dict.
+- The `poll()` contract requires the return dict to match `channels`
+  membership (enforced by `DataStore`). All declared channels must be
+  present.
 
-**Files:** `src/gui/plot_widget.py` (helper in same file, or separate utility)
+**Files:** `src/devices/sqm_controller.py`
 
-**Verify:** Manual check with CSV that has intentional 120 s gaps — verify
-no line crosses the gap.
+**Verify:** `python -m unittest tests.test_sqm_controller -v`
+- Mock the `_sqm_send("W")` response with real data from the manual example.
+- Assert `poll()` returns 6 channels × 3 values = 18 keys for a
+  6-sensor config.
+- Assert `poll()` returns 2 channels × 3 values = 6 keys for the default
+  2-sensor config.
+- Assert rate ≈ 7.10, thickness ≈ 3076.190, frequency ≈ 5497894.642 for
+  the first sensor from the manual's example.
 
 ---
 
-### T4 — Toolbar Mode Toggle & Log Controls
+### T4 — Device Manager Integration
 
-**What:** Add a mode toggle button and log-file controls to the main
-toolbar in `MainWindow`.  `DeviceManager` orchestrates the mode switch.
+**What:** Wire `SQMController` into the device factory so it can be
+instantiated from `config.json` entries.
 
 **Details:**
+- In `src/devices/device_manager.py` (or wherever the device factory lives):
+  - Add import for `SQMController`.
+  - Add a branch for `device_type == "sqm160"` (or similar key) that
+    constructs `SQMController(config)`.
+- Add a sample SQM-160 entry to the default config in `src/config.py`
+  (commented out or as documentation — actual entry is user-supplied).
+- The existing `AcquisitionEngine` already calls `device.poll()` and feeds
+  `DataStore` — no changes needed there if `poll()` returns the right shape.
 
-**MainWindow toolbar additions (`_build_toolbar`):**
+**Files:** `src/devices/device_manager.py`, maybe `src/config.py`
 
-- After the existing separator (after Disconnect All), add:
-  - **Mode toggle**: `QPushButton` (checkable) with text "⬤ Live" (unchecked)
-    / "⬤ View Log" (checked).  Styled distinctly (e.g. green/blue when
-    live, orange/amber when viewing log).
-  - **File label**: `QLabel` showing the loaded file name or "No file".
-    Hidden in Live mode.
-  - **Load button**: `QPushButton` "📂 Load…" — opens `QFileDialog`.
-    Hidden in Live mode.
-  - **From / To**: two `QDateTimeEdit` widgets.  Hidden in Live mode.
-  - **X-axis mode**: `QComboBox` with "Seconds from start" and "HH:MM:SS".
-    Hidden in Live mode.
-
-- All log controls are hidden/shown via `setVisible()` when the mode
-  toggle changes state.
-
-**DeviceManager mode orchestration:**
-
-- Method `set_view_mode(live: bool)`:
-  - If `live=False` (View Log mode): pauses plot subscriptions
-    (plots stop receiving live `push_data` calls), loads the selected CSV
-    via `LogFileReader` (worker thread), calls `plot.load_log_data()` on
-    each plot.
-  - If `live=True` (Live mode): calls `plot.clear_log_data()` on each
-    plot, resumes subscriptions.
-  - Updates the toolbar visibility.
-- The mode toggle's `toggled` signal connects to `set_view_mode`.
-- The Load button triggers a `QFileDialog` filtered to `logs/*.csv`,
-  then calls `_load_log_file(path)` which does the worker-thread read.
-
-**Files:** `src/gui/main_window.py`, `src/devices/device_manager.py`
-
-**Verify:** `python src/main.py` → click mode toggle → log controls appear.
-Click Load → select a CSV → plots render the log data.  Toggle back to Live →
-plots show live data again.  Acquisition status bar still shows "Running".
+**Verify:** `python -m unittest tests.test_device_manager -v`
+- Create a config with device type `"sqm160"` → `DeviceManager` instantiates
+  an `SQMController`.
+- Verify `engine.poll()` produces data that flows into `DataStore` (mock
+  serial required).
 
 ---
 
-### T5 — X-Axis Mode Switching
+### T5 — Unit Tests
 
-**What:** The x-axis mode combo switches between relative seconds and
-absolute wall-clock time (`HH:MM:SS`).
+**What:** Comprehensive unit tests for T1 (protocol) and T2–T3 (controller).
 
-**Details:**
-- For **relative mode**: x = seconds since the start of the selected time
-  range.  Axis label: "Time (s)".
-- For **absolute mode**: x = raw numeric timestamps, but the axis tick
-  labels are formatted as `HH:MM:SS`.  Achieved via a custom
-  `AxisItem` subclass that overrides `tickStrings()`.
-- Switching modes triggers a re-render of all curves (calling
-  `load_log_data` with the current time range but new x-axis mode).
-- The x-axis mode combo is only visible in "View Log" mode.
+**Details for `tests/test_sqm_protocol.py`:**
+- `test_crc_matches_manual_example_J` — CRC for `"J"` matches the
+  manual's `(79, 56)`.
+- `test_crc_matches_manual_example_at` — CRC for `"@"` matches `(79, 55)`.
+- `test_crc_matches_manual_example_W` — CRC for `"W"` matches `(143, 53)`.
+- `test_crc_matches_manual_example_L1` — CRC for `"L1?"` matches
+  `(133, 123)`.
+- `test_build_and_parse_roundtrip` — build a packet, parse it → same
+  command.
+- `test_parse_bad_crc_raises` — corrupt CRC byte → `SQMProtocolError`.
+- `test_parse_invalid_status_raises` — status `"C"` → `SQMProtocolError`.
+- `test_parse_missing_sync_raises` — no `!` → `SQMProtocolError`.
 
-**Files:** `src/gui/plot_widget.py` (custom `TimeAxisItem`), `src/devices/device_manager.py`
+**Details for `tests/test_sqm_controller.py`:**
+- `test_device_id` — returns `"SQM-0"` for address 0.
+- `test_channels_default` — 2 sensors → 6 channel names.
+- `test_channels_max` — 6 sensors → 18 channel names.
+- `test_sqm_send_builds_correct_packet` — verify bytes written to mock
+  serial.
+- `test_poll_parses_w_response` — provide a mock `W` response, verify the
+  returned dict.
+- `test_poll_handles_nan` — some values might be non-numeric (simulate
+  error), verify graceful handling.
+- `test_after_connect_queries_version` — mock responses for `@` and `J`,
+  verify cache populated.
 
-**Verify:** Load a CSV in View Log mode.  Switch x-axis mode — tick labels
-change between seconds and `HH:MM:SS`.  Verify the curves remain correct.
+**Files:** `tests/test_sqm_protocol.py`, `tests/test_sqm_controller.py`
+
+**Verify:** `python -m unittest tests.test_sqm_protocol tests.test_sqm_controller -v`
+→ all tests pass.
 
 ---
 
-### T6 — Tests
+### T6 — Integration / Smoke Test
 
-**What:** Unit tests for the CSV parser (T1) and gap detection (T3).
+**What:** End-to-end verification with the full application.
 
 **Details:**
-- `tests/test_log_reader.py`:
-  - `test_parse_valid_csv` — correct headers, timestamps, values.
-  - `test_missing_file` — graceful error (exception or error result).
-  - `test_empty_csv` — only headers, no data rows.
-  - `test_unsorted_timestamps` — output is sorted ascending.
-  - `test_non_numeric_columns_skipped` — text columns are ignored.
-- `tests/test_log_viewer.py` (or inline in plot_widget tests):
-  - `test_split_into_segments` — two segments for 120 s gap, one for
-    contiguous data.
-  - `test_no_segments` — empty input returns empty list.
+- Create a `config.json` with an SQM-160 entry:
+  ```json
+  {
+    "type": "sqm160",
+    "device_id": "SQM-0",
+    "port": "COM3",
+    "baudrate": 19200,
+    "number_of_sensors": 2
+  }
+  ```
+- Launch the app → verify SQM-0 appears in the device list.
+- Click **Connect All** → verify firmware version and channel count appear
+  in the log.
+- Add a plot for SQM-0 → verify `ch1_rate`, `ch1_thickness`,
+  `ch1_frequency` appear as selectable channels.
+- Click **Start** → verify data flows into the plot.
+- Disconnect the serial cable → verify reconnection loop kicks in.
+- Reconnect the cable → verify data resumes.
 
-**Files:** `tests/test_log_reader.py`
+**Files:** `config.json` (user-managed, not committed)
 
-**Verify:** `python -m unittest tests.test_log_reader -v` (all pass)
+**Verify:** Manual check with actual SQM-160 hardware if available; otherwise
+mock-serial smoke test in offscreen mode.
 
 ## Validation
 
-After all tasks complete, perform end-to-end verification:
-
-1. `python -m unittest tests.test_log_reader tests.test_datastore
-   tests.test_acquisition_engine tests.test_vcu_controller
-   tests.test_data_logger -v` → all tests pass.
-2. `python src/main.py` → start acquisition (▶ Start).
-3. Verify live plots are showing real-time data.
-4. Click mode toggle → "⬤ View Log" (checked).
-5. Verify log controls appear in the toolbar (Load, From, To, X-axis).
-6. Click **📂 Load…** → select `logs/2026-05-21_VCU-0.csv`.
-7. Verify plots render CSV data with correct channel colours and legend.
-8. Verify the status bar still shows "Running" (acquisition continues).
-9. Toggle a channel off via the plot's **Channels** button → its curve
-   disappears (same behaviour as live mode).
-10. Adjust time range via `QDateTimeEdit` → curves update.
-11. Switch x-axis mode to `HH:MM:SS` → tick labels show wall-clock time.
-12. Verify gaps > 60 s show as broken lines (no connector).
-13. Click mode toggle back to "Live" → plots resume showing live data.
-14. Close and reopen the app → the mode toggle and dock layout are
-    restored.
+1. `python -m unittest tests.test_sqm_protocol tests.test_sqm_controller tests.test_vcu_controller tests.test_acquisition_engine tests.test_datastore tests.test_data_logger tests.test_log_viewer tests.test_log_reader -v` → all tests pass.
+2. `python src/main.py` → GUI starts without errors.
+3. Add an SQM-160 device via `config.json` → device appears in Device Manager.
+4. Connect to the SQM-160 (or mock serial) → firmware version and channel count logged.
+5. Start acquisition → SQM-160 channels appear in plots with real-time data.
+6. Disconnect cable → reconnection loop activates, no crash.
+7. Reconnect cable → data resumes automatically.
+8. Switch to View Log mode → existing log-viewer functionality is unaffected.

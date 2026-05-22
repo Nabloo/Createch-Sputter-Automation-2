@@ -409,7 +409,10 @@ class PlotWidget(QWidget):
         # Clear any rendered data from the screen
         for curve in self._curves.values():
             curve.setData([], [])
-        self._plot.setLabel("bottom", "Time (s)")
+        # Restore the regular AxisItem — a DateAxisItem may be installed
+        # if the user was viewing logs in absolute (HH:MM:SS) mode.
+        self._set_relative_axis()
+        self._x_axis_mode = "relative"
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         logger.debug("PlotWidget[%s]: switched back to live mode", self._device_id)
 
@@ -764,8 +767,8 @@ class PlotWidget(QWidget):
 
         Reads the pre-built (xs, ys) from ``_log_data_cache``, splits
         at gaps >60 s, and adds one ``PlotDataItem`` per contiguous
-        segment.  The first segment carries the channel ``name`` (for
-        the legend); subsequent segments are anonymous.
+        segment.  Curves carry no legend entry (the live-curve legend
+        items serve for both modes).
         """
         # Remove any previous log curves for this channel
         for curve in self._log_curves.pop(name, []):
@@ -788,9 +791,6 @@ class PlotWidget(QWidget):
                 list(seg_x),
                 list(seg_y),
                 pen=pg.mkPen(color=colour, width=2),
-                name=name if i == 0 else None,
-                symbol="o",
-                symbolSize=4,
                 autoDownsample=True,
             )
             if not visible:
@@ -807,8 +807,32 @@ class PlotWidget(QWidget):
         self._log_curves.clear()
 
     def _update_x_axis_label(self, mode: str) -> None:
-        """Set the x-axis label based on the current mode."""
+        """Set the x-axis label and axis type based on the current mode.
+
+        In "absolute" mode the bottom axis is replaced with a
+        ``DateAxisItem`` so Unix timestamps are displayed as HH:MM:SS
+        instead of raw epoch numbers.
+        """
+        if getattr(self, "_x_axis_mode", None) == mode:
+            return  # no-op — already in the requested mode
+
+        plot_item = self._plot.getPlotItem()
+        axis_pen = pg.mkPen(color="#888888", width=1)
         if mode == "absolute":
+            axis = pg.DateAxisItem(orientation="bottom")
+            plot_item.setAxisItems({"bottom": axis})
+            axis.setPen(axis_pen)
+            axis.setTextPen(axis_pen)
             self._plot.setLabel("bottom", "Time")
         else:
-            self._plot.setLabel("bottom", "Time (s)")
+            self._set_relative_axis(axis_pen)
+
+    def _set_relative_axis(self, axis_pen=None) -> None:
+        """Install a regular ``AxisItem`` for relative-seconds display."""
+        if axis_pen is None:
+            axis_pen = pg.mkPen(color="#888888", width=1)
+        axis = pg.AxisItem(orientation="bottom")
+        self._plot.getPlotItem().setAxisItems({"bottom": axis})
+        axis.setPen(axis_pen)
+        axis.setTextPen(axis_pen)
+        self._plot.setLabel("bottom", "Time (s)")

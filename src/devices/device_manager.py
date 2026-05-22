@@ -98,6 +98,14 @@ class DeviceManager:
         self._log_reader = LogFileReader()
         self._log_data: Optional[LogData] = None
         self._log_filepath: str = ""
+        # Remember the last folder used for opening log files.
+        # Initialise from config so the user's last-used folder persists
+        # across restarts.  Falls back to logging.directory (for saving)
+        # then to "logs" as ultimate default.
+        self._last_log_dir: str = (
+            config.get("gui", {}).get("last_log_open_dir")
+            or config.get("logging", {}).get("directory", "logs")
+        )
         # Wire log-reader signals
         self._log_reader.loaded.connect(self._on_log_loaded)
         self._log_reader.error_occurred.connect(self._window.error_occurred.emit)
@@ -724,20 +732,31 @@ class DeviceManager:
         # ---- Log viewer controls ----
         w._mode_toggle.toggled.connect(lambda checked: self.set_view_mode(not checked))
         w._load_btn.clicked.connect(self._on_load_clicked)
+        w._logdir_action.triggered.connect(self._on_choose_log_directory)
         w._xaxis_combo.currentIndexChanged.connect(self._on_xaxis_changed)
         # Use editingFinished to avoid re-rendering on every keystroke
         w._from_dt.editingFinished.connect(self._on_time_range_changed)
         w._to_dt.editingFinished.connect(self._on_time_range_changed)
 
     def _on_load_clicked(self) -> None:
-        """Open a QFileDialog and start loading the selected CSV."""
+        """Open a QFileDialog and start loading the selected CSV.
+
+        Remembers the last-used folder across invocations and persists
+        it via the logging.directory config entry.
+        """
         filepath, _ = QFileDialog.getOpenFileName(
             self._window,
             "Open Log File",
-            "logs",
+            self._last_log_dir,
             "CSV Files (*.csv);;All Files (*)",
         )
         if filepath:
+            # Remember this folder for next time (separate key from the
+            # menu-chosen logging.directory, so browsing doesn't overwrite
+            # the user's preferred save location).
+            self._last_log_dir = os.path.dirname(filepath)
+            self._config.setdefault("gui", {})["last_log_open_dir"] = self._last_log_dir
+            save_config(self._config)
             self._load_log_file(filepath)
 
     def _on_xaxis_changed(self, _index: int) -> None:
@@ -749,6 +768,20 @@ class DeviceManager:
         """From/To datetime changed — re-render log data."""
         if not self._view_mode_live and self._log_data is not None:
             self._apply_log_data_to_plots()
+
+    def _on_choose_log_directory(self) -> None:
+        """Open a folder picker and persist the chosen log directory."""
+        directory = QFileDialog.getExistingDirectory(
+            self._window,
+            "Choose Log Directory",
+            self._last_log_dir,
+        )
+        if directory:
+            self._last_log_dir = directory
+            self._config.setdefault("logging", {})["directory"] = directory
+            save_config(self._config)
+            self._window.temporary_status(f"Log directory: {directory}")
+            logger.info("Log directory changed to %s", directory)
 
     def _wire_status_timer(self) -> None:
         """Wire MainWindow's existing status refresh timer to our method."""

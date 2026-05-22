@@ -73,6 +73,7 @@ class DockManager:
         dock.setObjectName(panel_id)
         dock.setWidget(widget)
         dock.setAllowedAreas(allowed_areas)
+        dock.setFeatures(QDockWidget.DockWidgetMovable)
         self._window.addDockWidget(area, dock)
         self._docks[panel_id] = dock
         logger.debug("Added dock panel %r", panel_id)

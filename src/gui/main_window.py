@@ -84,6 +84,12 @@ class MainWindow(QMainWindow):
         # ---- File ----
         file_menu = menu_bar.addMenu("&File")
 
+        self._logdir_action = QAction("Choose &Log Directory…", self)
+        self._logdir_action.setStatusTip("Select where CSV log files are saved")
+        file_menu.addAction(self._logdir_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         exit_action.setStatusTip("Exit the application")
@@ -239,8 +245,8 @@ class MainWindow(QMainWindow):
         row1_layout.addWidget(history_label)
 
         self._history_spin = QSpinBox()
-        self._history_spin.setRange(0, 3600)
-        self._history_spin.setSpecialValueText("All")
+        self._history_spin.setRange(0, 3600*24)
+        #self._history_spin.setSpecialValueText("All")
         self._history_spin.setSuffix(" s")
         self._history_spin.setToolTip("Rolling history window (0 = show everything)")
         self._history_spin.setMinimumWidth(80)
@@ -306,8 +312,8 @@ class MainWindow(QMainWindow):
         xlabel.setStyleSheet("padding: 0 2px 0 6px;")
         row2_layout.addWidget(xlabel)
         self._xaxis_combo = QComboBox()
-        self._xaxis_combo.addItems(["Seconds from start", "HH:MM:SS"])
-        self._xaxis_combo.setMinimumWidth(140)
+        self._xaxis_combo.addItems(["Seconds", "HH:MM:SS"])
+        self._xaxis_combo.setMinimumWidth(80)
         self._xaxis_combo.setToolTip("X-axis display mode")
         row2_layout.addWidget(self._xaxis_combo)
 
