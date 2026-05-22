@@ -12,20 +12,72 @@ DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "config.json")
 BACKUP_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "backup_config.json")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "devices": [],
-    "logging": {
-        "enabled": True,
-        "directory": "logs",
-        "rotation_enabled": True,
+  "devices": [
+    {
+      "type": "VCUController",
+      "device_id": "VCU-0",
+      "address": 0,
+      "port": "COM6",
+      "baudrate": 19200,
+      "bytesize": 8,
+      "parity": "N",
+      "stopbits": 1,
+      "timeout": 1.0,
+      "write_timeout": 1.0,
+      "reconnect_interval": 3.0,
+      "max_retries": 5,
+      "number_of_sensors": 3,
+      "poll_interval": 0.5
+    }
+  ],
+  "logging": {
+    "enabled": true,
+    "directory": "logs",
+    "rotation_enabled": true
+  },
+  "gui": {
+    "theme": "dark",
+    "window": {
+      "width": 1424,
+      "height": 813,
+      "x": 153,
+      "y": 111,
+      "maximized": false
     },
-    "gui": {
-        "theme": "dark",
-        "window": {},
-        "plots": [],
-        "device_panels": [],
-    },
+    "plots": [
+      {
+        "dock_id": "plot_2",
+        "device_id": "VCU-0",
+        "area": "right",
+        "channels": [
+          "ch1_pressure",
+          "ch2_pressure",
+          "ch3_pressure"
+        ],
+        "colours": [
+          "#00bfff",
+          "#ff6b6b",
+          "#51cf66"
+        ],
+        "visibility": {
+          "ch1_pressure": true,
+          "ch2_pressure": true,
+          "ch3_pressure": true
+        },
+        "history_seconds": 0.0,
+        "y_log": false
+      }
+    ],
+    "device_panels": [
+      {
+        "device_id": "VCU-0",
+        "dock_id": "device_VCU-0",
+        "area": "left"
+      }
+    ],
+    "last_log_open_dir": ""
+  }
 }
-
 
 # ------------------------------------------------------------------
 # Core file I/O
@@ -50,8 +102,11 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     If the file exists, its contents are deep-merged into DEFAULT_CONFIG,
     so missing keys retain their default values.
     """
-    if not os.path.exists(path):
+    if not os.path.exists(path) and os.path.exists(BACKUP_CONFIG_PATH):
+        path = BACKUP_CONFIG_PATH
+    elif not os.path.exists(path):
         return copy.deepcopy(DEFAULT_CONFIG)
+
     with open(path, "r", encoding="utf-8") as f:
         cfg: Dict[str, Any] = json.load(f)
     return _deep_merge(DEFAULT_CONFIG, cfg)
