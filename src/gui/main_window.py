@@ -1,8 +1,11 @@
 """Main application window with dock system, toolbar, and status bar."""
 
 import logging
+import os
+import shutil
+import sys
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QProcess, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from src.gui.dock_manager import DockManager
 from src.gui.theme import apply_dark_theme, apply_light_theme
+from src.config import BACKUP_CONFIG_PATH, DEFAULT_CONFIG_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +123,13 @@ class MainWindow(QMainWindow):
         self._theme_action.setStatusTip("Toggle between dark and light theme")
         self._theme_action.triggered.connect(self._on_toggle_theme)
         view_menu.addAction(self._theme_action)
+
+        view_menu.addSeparator()
+
+        self._reset_action = QAction("&Reset to Defaults …", self)
+        self._reset_action.setStatusTip("Restore default configuration and restart")
+        self._reset_action.triggered.connect(self._on_reset_defaults)
+        view_menu.addAction(self._reset_action)
 
         # ---- Help ----
         help_menu = menu_bar.addMenu("&Help")
@@ -418,6 +429,60 @@ class MainWindow(QMainWindow):
             "deposition processes.</p>"
             "<p>Built with PySide6 and pyqtgraph.</p>",
         )
+
+    def _on_reset_defaults(self) -> None:
+        """Restore backup_config.json over config.json and restart."""
+        reply = QMessageBox.question(
+            self,
+            "Reset to Defaults",
+            "This will restore the startup configuration and restart "
+            "the application.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        if not os.path.exists(BACKUP_CONFIG_PATH):
+            QMessageBox.warning(
+                self,
+                "Reset to Defaults",
+                f"Backup configuration not found at\n{BACKUP_CONFIG_PATH}",
+            )
+            return
+
+        # Copy backup over the live config file
+        try:
+            shutil.copy(BACKUP_CONFIG_PATH, DEFAULT_CONFIG_PATH)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Reset Failed",
+                f"Could not restore configuration:\n{exc}",
+            )
+            return
+        logger.info("Restored default configuration from %s", BACKUP_CONFIG_PATH)
+
+        # Disconnect the quit handler so it doesn't overwrite the file
+        # with the (now-stale) runtime config before we restart.
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.aboutToQuit.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+        # Launch a fresh instance and kill this one
+        ok = QProcess.startDetached(sys.executable, sys.argv)
+        if not ok:
+            logger.error("Failed to restart application via %s", sys.executable)
+            QMessageBox.warning(
+                self,
+                "Restart Failed",
+                "Could not start a new instance. Please restart the application manually.",
+            )
+            return
+        QApplication.quit()
 
     def show_error(self, message: str, timeout_ms: int = 20000) -> None:
         """Display an error message in the status bar.

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # regardless of the working directory at launch time.
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "config.json")
+BACKUP_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "backup_config.json")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "devices": [],
