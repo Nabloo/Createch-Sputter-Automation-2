@@ -373,6 +373,7 @@ class DeviceManager:
     def _setup_devices(self) -> None:
         """Create device instances and panels from config."""
         panel_cfgs = {pc["device_id"]: pc for pc in get_device_panel_configs(self._config)}
+        device_docks: list = []
 
         for dev_cfg in get_device_configs(self._config):
             device = self._create_device(dev_cfg)
@@ -388,11 +389,22 @@ class DeviceManager:
             panel = self._create_panel(device, dev_cfg, panel_cfgs.get(device_id))
             if panel:
                 self._panels[device_id] = panel
+                # Collect dock for tabification
+                dock = self._window.dock_manager.panel(f"device_{device_id}")
+                if dock:
+                    device_docks.append(dock)
                 # Wire panel buttons → DeviceManager actions
                 panel.connect_requested.connect(self.connect_device)
                 panel.disconnect_requested.connect(self.disconnect_device)
                 # Wire store → panel (live values)
                 self._store.subscribe(panel.push_data)
+
+        # Tabify device panels together in the left dock area
+        if len(device_docks) >= 2:
+            first = device_docks[0]
+            for dock in device_docks[1:]:
+                self._window.tabifyDockWidget(first, dock)
+            first.raise_()
 
     def _create_device(self, cfg: Dict[str, Any]) -> Optional[BaseDevice]:
         """Instantiate a device driver from its config dict."""
