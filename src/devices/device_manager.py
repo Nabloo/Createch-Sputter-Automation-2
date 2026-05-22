@@ -594,6 +594,9 @@ class DeviceManager:
         # Persist state changes
         plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
 
+        if not self._view_mode_live:
+            self._apply_log_data_to_plots()
+
         self._balance_docks()
 
         # Persist the new plot config immediately
