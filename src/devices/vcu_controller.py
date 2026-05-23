@@ -111,18 +111,18 @@ class VCUController(BaseDevice):
 
         Returns:
             Dict mapping integer channel number to a dict with keys
-            ``pressure``, ``status_code``, ``status_text``, ``unit``.
+            ``pressure``, ``pressure_unit``, ``status_code``, ``status_text``.
         """
         data: Dict[int, Dict[str, Any]] = {}
         for channel in range(1, self._number_of_sensors + 1):
             pressure, status_code = self.read_pressure(channel)
             data[channel] = {
                 "pressure": pressure,
+                "pressure_unit": self._pressure_unit,
                 "status_code": status_code,
                 "status_text": STATUS_TEXTS.get(
                     status_code, f"Unknown ({status_code})"
                 ),
-                "unit": self._pressure_unit,
             }
         return data
 

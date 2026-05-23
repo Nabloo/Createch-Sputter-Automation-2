@@ -28,6 +28,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
       "max_retries": 5,
       "number_of_sensors": 3,
       "poll_interval": 0.5
+    },
+    {
+      "type": "SQMController",
+      "device_id": "SQM-0",
+      "address": 0,
+      "port": "COM6",
+      "baudrate": 19200,
+      "timeout": 1.0,
+      "write_timeout": 1.0,
+      "reconnect_interval": 3.0,
+      "max_retries": 5,
+      "number_of_sensors": 1,
+      "poll_interval": 1.0,
+      "units": {
+        "rate": "\u00c5/s",
+        "thickness": "k\u00c5",
+        "frequency": "Hz"
+      }
     }
   ],
   "logging": {

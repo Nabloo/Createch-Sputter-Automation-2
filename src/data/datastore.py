@@ -190,8 +190,8 @@ class DataStore:
         Handles two conventions:
 
         1. **Dict-of-dicts** (VCU style):
-           ``{1: {"pressure": ..., "unit": ...}, 2: {...}}``
-           → ``{"ch1_pressure": ..., "ch1_unit": ..., "ch2_pressure": ...}``
+           ``{1: {"pressure": ..., "pressure_unit": ..., "status_code": ...}, 2: {...}}``
+           → ``{"ch1_pressure": ..., "ch1_pressure_unit": ..., "ch1_status_code": ...}``
 
         2. **Flat dict**: ``{"pressure": 1e-3, "status": 0}``
            -> returned as-is for scalar values.

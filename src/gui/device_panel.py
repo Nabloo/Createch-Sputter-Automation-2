@@ -350,13 +350,6 @@ class DevicePanel(QWidget):
                         flat[f"ch{ch_key}_{field}"] = value
             data = flat
 
-        # Derive sensor number from a channel key like "ch1_pressure"
-        def _sensor_num(key: str) -> str:
-            parts = key.split("_")
-            if parts and parts[0].startswith("ch") and len(parts[0]) > 2:
-                return parts[0][2:]
-            return ""
-
         for key, value in data.items():
             lbl = self._value_labels.get(key)
             if lbl and isinstance(value, (int, float, str)):
@@ -365,14 +358,11 @@ class DevicePanel(QWidget):
                 else:
                     lbl.setText(str(value))
 
-            # Update unit label if this channel has a unit in the data
-            # (e.g. ch1_pressure → look for ch1_unit; skip status fields)
-            if "status" not in key:
-                unit_key = f"ch{_sensor_num(key)}_unit"
-                unit_lbl = self._unit_labels.get(key)
-                if unit_lbl:
-                    unit_val = data.get(unit_key)
-                    if unit_val and isinstance(unit_val, str):
-                        unit_lbl.setText(unit_val)
-                    else:
-                        unit_lbl.setText("")
+            # Update unit label from per-field unit key (e.g. ch1_pressure_unit)
+            unit_lbl = self._unit_labels.get(key)
+            if unit_lbl:
+                unit_val = data.get(f"{key}_unit")
+                if unit_val and isinstance(unit_val, str):
+                    unit_lbl.setText(unit_val)
+                else:
+                    unit_lbl.setText("")

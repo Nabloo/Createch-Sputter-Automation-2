@@ -206,6 +206,10 @@ class TestPoll(unittest.TestCase):
         self.assertAlmostEqual(data["ch2_rate"], 5.20)
         self.assertAlmostEqual(data["ch2_thickness"], 1500.500)
         self.assertAlmostEqual(data["ch2_frequency"], 5500000.123)
+        # Units default to empty when not configured
+        self.assertEqual(data["ch1_rate_unit"], "")
+        self.assertEqual(data["ch1_thickness_unit"], "")
+        self.assertEqual(data["ch1_frequency_unit"], "")
 
     def test_poll_skips_dummy_first_value(self):
         """Ensure dummy 00.00 is not in any channel data."""
@@ -213,6 +217,7 @@ class TestPoll(unittest.TestCase):
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             data = self.ctrl.poll()
         self.assertAlmostEqual(data["ch1_rate"], 1.0)
+        self.assertEqual(data["ch1_rate_unit"], "")
 
     def test_poll_returns_only_configured_channels(self):
         """With 2 sensors configured, only ch1 and ch2 present."""
@@ -226,7 +231,7 @@ class TestPoll(unittest.TestCase):
         )
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             data = self.ctrl.poll()
-        self.assertEqual(len(data), 6)  # 2 sensors × 3 values
+        self.assertEqual(len(data), 12)  # 2 sensors × (3 values + 3 units)
         self.assertIn("ch1_rate", data)
         self.assertIn("ch2_rate", data)
         self.assertNotIn("ch3_rate", data)
@@ -238,7 +243,8 @@ class TestPoll(unittest.TestCase):
             data = self.ctrl.poll()
         # The empty string "" fails float() → NaN for rate;
         # thickness and frequency IndexError → NaN too.
-        self.assertEqual(len(data), 3)
+        # Plus 3 unit keys per sensor = 6 total
+        self.assertEqual(len(data), 6)
         self.assertTrue(math.isnan(data["ch1_rate"]))
         self.assertTrue(math.isnan(data["ch1_thickness"]))
         self.assertTrue(math.isnan(data["ch1_frequency"]))

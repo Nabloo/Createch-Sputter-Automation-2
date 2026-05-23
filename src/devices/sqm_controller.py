@@ -31,6 +31,7 @@ class SQMController(BaseDevice):
         self._num_sensors = max(1, min(self._num_sensors, 6))
         self._version: Optional[str] = None
         self._num_channels: Optional[int] = None
+        self._units: Dict[str, str] = config.get("units", {})
         self._channels: List[str] = []
         for n in range(1, self._num_sensors + 1):
             self._channels.append(f"ch{n}_rate")
@@ -147,4 +148,8 @@ class SQMController(BaseDevice):
             data[f"ch{n}_rate"] = rate
             data[f"ch{n}_thickness"] = thickness
             data[f"ch{n}_frequency"] = frequency
+            # Per-field units
+            data[f"ch{n}_rate_unit"] = self._units.get("rate", "")
+            data[f"ch{n}_thickness_unit"] = self._units.get("thickness", "")
+            data[f"ch{n}_frequency_unit"] = self._units.get("frequency", "")
         return data

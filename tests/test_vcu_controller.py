@@ -231,7 +231,7 @@ class TestVCUControllerPoll(unittest.TestCase):
             self.assertAlmostEqual(ch["pressure"], 1.23e-3)
             self.assertEqual(ch["status_code"], 0)
             self.assertEqual(ch["status_text"], "OK")
-            self.assertEqual(ch["unit"], "mbar")
+            self.assertEqual(ch["pressure_unit"], "mbar")
 
     def test_poll_error_status(self):
         with patch.object(self.device, '_send_command', return_value="7,0.0"):
