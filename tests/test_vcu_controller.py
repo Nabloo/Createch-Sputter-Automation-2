@@ -271,9 +271,12 @@ class TestVCUControllerConnectLifecycle(unittest.TestCase):
 
     def test_after_connect_sensor_failure(self):
         with patch.object(self.device, '_send_command', side_effect=TimeoutError("Timeout")):
-            self.device._after_connect()
+            with self.assertRaises(TimeoutError):
+                self.device._after_connect()
+            # sensor_id query failed before assignment — stays None from init
             self.assertIsNone(self.device._sensor_id)
             self.assertEqual(self.device.sensor_name, "Unknown")
+            # firmware query was never attempted — stays None from init
             self.assertIsNone(self.device._firmware_version)
 
     def test_sensor_name_after_connect(self):

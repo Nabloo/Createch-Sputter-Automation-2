@@ -127,17 +127,20 @@ class VCUController(BaseDevice):
         return data
 
     def _after_connect(self) -> None:
+        # Sensor ID is the connection verification — failure means the device
+        # is not actually responding, even though the serial port opened.
+        self._sensor_id = self.read_sensor_id()
+        logger.info(
+            "%s: sensor ID = %d (%s)", self.device_id,
+            self._sensor_id,
+            SENSOR_NAMES.get(self._sensor_id, "Unknown"),
+        )
+
+        # Pressure unit and firmware version are secondary — graceful failure ok.
         try:
-            self._sensor_id = self.read_sensor_id()
             self._pressure_unit = self.read_pressure_unit()
-            logger.info(
-                "%s: sensor ID = %d (%s)", self.device_id,
-                self._sensor_id,
-                SENSOR_NAMES.get(self._sensor_id, "Unknown"),
-            )
         except (VCUProtocolError, TimeoutError, ConnectionError, OSError, serial.SerialException):
-            logger.warning("%s: could not read sensor ID", self.device_id)
-            self._sensor_id = None
+            logger.warning("%s: could not read pressure unit, keeping default", self.device_id)
         try:
             self._firmware_version = self.read_firmware()
             logger.info("%s: firmware = %s", self.device_id, self._firmware_version)
