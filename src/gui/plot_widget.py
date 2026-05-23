@@ -83,6 +83,7 @@ class PlotWidget(QWidget):
     _data_arrived = Signal(str, float, object)
     remove_requested = Signal()
     state_changed = Signal()  # emitted when device, channels, visibility etc. change
+    device_changed = Signal(str)  # emitted when user selects a different device
 
     def __init__(
         self,
@@ -727,7 +728,10 @@ class PlotWidget(QWidget):
             return
         self._device_id = new_device
         self._selected_device = new_device
-        self._t0 = None
+        # Preserve the global timeline — all devices record simultaneously,
+        # so the same t0 applies.  Falls back to None if no plot has ever
+        # received data (no global origin set yet).
+        self._t0 = self._shared_t0[0] if self._shared_t0 and self._shared_t0[0] is not None else None
         self._y_label_set = False
         for buf in self._buffers.values():
             buf.clear()
@@ -742,6 +746,7 @@ class PlotWidget(QWidget):
         self._update_y_label()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
+        self.device_changed.emit(new_device)
         logger.debug("PlotWidget: switched to device %r", new_device)
 
     # ------------------------------------------------------------------
