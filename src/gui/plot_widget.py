@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.data_logging.log_reader import LogData
-from src.gui.plot_config_dialog import PlotConfigDialog
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +39,22 @@ TRACE_COLOURS = [
 ]
 
 _GAP_THRESHOLD_S = 60.0
+
+
+def _channel_legend_name(channel: str) -> str:
+    """Format a channel key as a legend-friendly name.
+
+    Examples::
+        ch1_pressure  → "Ch1 Pressure"
+        ch1_rate      → "Ch1 Rate"
+        ch2_thickness → "Ch2 Thickness"
+    """
+    parts = channel.split("_", 1)
+    if len(parts) > 1 and parts[0].startswith("ch") and parts[0][2:].isdigit():
+        ch_num = parts[0][2:]
+        name = parts[1].replace("_", " ").title()
+        return f"Ch{ch_num} {name}"
+    return channel.replace("_", " ").title()
 
 
 def _split_into_segments(
@@ -248,6 +263,8 @@ class PlotWidget(QWidget):
                     self._curves[name].setPen(pg.mkPen(color=colour, width=2))
             else:
                 self._add_channel(name, colour)
+
+        self._ensure_single_unit_group()
 
         logger.debug(
             "PlotWidget[%s]: channels = %s", self._device_id, channels
@@ -565,6 +582,7 @@ class PlotWidget(QWidget):
                 self._update_curve(name)
             else:
                 curve.setData([], [])
+        self._ensure_single_unit_group()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
 
@@ -585,6 +603,7 @@ class PlotWidget(QWidget):
                     self._update_curve(ch_name)
                 else:
                     curve.setData([], [])
+        self._ensure_single_unit_group()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     @property
@@ -682,6 +701,8 @@ class PlotWidget(QWidget):
         colours = {n: c["colour"] for n, c in self._channels.items()}
         visibility = {n: c.get("visible", True) for n, c in self._channels.items()}
 
+        from src.gui.plot_config_dialog import PlotConfigDialog
+
         dlg = PlotConfigDialog(
             channels=channels,
             colours=colours,
@@ -718,6 +739,7 @@ class PlotWidget(QWidget):
                         self._update_curve(name)
                     else:
                         curve.setData([], [])
+            self._ensure_single_unit_group()
             self._update_y_label()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
             self.state_changed.emit()
@@ -781,7 +803,7 @@ class PlotWidget(QWidget):
         curve = self._plot.plot(
             [], [],
             pen=pg.mkPen(color=colour, width=2),
-            name=name,
+            name=_channel_legend_name(name),
             autoDownsample=True,
         )
         self._curves[name] = curve
@@ -876,40 +898,61 @@ class PlotWidget(QWidget):
 
         If channels span multiple unit groups (e.g. after a device switch),
         collapses visibility to the first group so only same-unit channels
-        are plotted together.
+        are plotted together.  Always syncs the legend afterward.
         """
-        if not self._channel_units or not self._channels:
+        if not self._channels:
             return
-        # Group channels by unit, preserving insertion order
-        groups: Dict[str, List[str]] = {}
-        for ch in self._channels:
-            unit = self._channel_units.get(ch, "")
-            if unit not in groups:
-                groups[unit] = []
-            groups[unit].append(ch)
-        if len(groups) <= 1:
+        # If we have unit info, enforce single-unit grouping
+        if self._channel_units:
+            # Group channels by unit, preserving insertion order
+            groups: Dict[str, List[str]] = {}
+            for ch in self._channels:
+                unit = self._channel_units.get(ch, "")
+                if unit not in groups:
+                    groups[unit] = []
+                groups[unit].append(ch)
+            if len(groups) > 1:
+                # Find groups that have at least one visible channel
+                groups_with_visible = [
+                    u for u, chs in groups.items()
+                    if any(self._channels[ch].get("visible", True) for ch in chs)
+                ]
+                if len(groups_with_visible) > 1:
+                    # Collapse to the first group (by insertion order) that has visible channels
+                    keep_unit = groups_with_visible[0]
+                    for unit, chs in groups.items():
+                        visible = (unit == keep_unit)
+                        for ch in chs:
+                            cfg = self._channels.get(ch)
+                            if cfg and cfg.get("visible", True) != visible:
+                                cfg["visible"] = visible
+                                curve = self._curves.get(ch)
+                                if curve is not None:
+                                    if visible:
+                                        self._update_curve(ch)
+                                    else:
+                                        curve.setData([], [])
+        # Always sync the legend, even for single-unit-group devices
+        # where visibility may have changed via apply_visibility / set_channel_visibility.
+        self._update_legend()
+
+    def _update_legend(self) -> None:
+        """Sync legend entries with current channel visibility.
+
+        Rebuilds the legend from scratch — only visible channels appear,
+        each with a friendly name like "Ch1 Pressure".  Hidden channels
+        are absent from the legend entirely.
+        """
+        legend = self._plot.getPlotItem().legend
+        if legend is None:
             return
-        # Find groups that have at least one visible channel
-        groups_with_visible = [
-            u for u, chs in groups.items()
-            if any(self._channels[ch].get("visible", True) for ch in chs)
-        ]
-        if len(groups_with_visible) <= 1:
-            return
-        # Collapse to the first group (by insertion order) that has visible channels
-        keep_unit = groups_with_visible[0]
-        for unit, chs in groups.items():
-            visible = (unit == keep_unit)
-            for ch in chs:
-                cfg = self._channels.get(ch)
-                if cfg and cfg.get("visible", True) != visible:
-                    cfg["visible"] = visible
-                    curve = self._curves.get(ch)
-                    if curve is not None:
-                        if visible:
-                            self._update_curve(ch)
-                        else:
-                            curve.setData([], [])
+        legend.clear()
+        for name, cfg in self._channels.items():
+            if not cfg.get("visible", True):
+                continue
+            curve = self._curves.get(name)
+            if curve is not None:
+                legend.addItem(curve, _channel_legend_name(name))
 
     def _update_y_label(self) -> None:
         """Set the y-axis label based on the common unit of visible channels."""

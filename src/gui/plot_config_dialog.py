@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.plot_widget import _channel_legend_name
+
 logger = logging.getLogger(__name__)
 
 _COLOUR_PRESETS = [
@@ -181,7 +183,9 @@ class PlotConfigDialog(QDialog):
                 colour = self._colours.get(ch, _COLOUR_PRESETS[ch_index % len(_COLOUR_PRESETS)])
                 ch_index += 1
 
-                cb = QCheckBox(ch)
+                display = _channel_legend_name(ch)
+
+                cb = QCheckBox(display)
                 cb.setChecked(visible)
                 cb.toggled.connect(lambda checked, c=ch: self._on_channel_toggled(c, checked))
                 self._checkboxes[ch] = cb
@@ -192,7 +196,7 @@ class PlotConfigDialog(QDialog):
                     f"background-color: {colour}; border: 1px solid #555; "
                     f"border-radius: 3px;"
                 )
-                btn.setToolTip(f"Click to change colour for {ch}")
+                btn.setToolTip(f"Click to change colour for {display}")
                 btn.clicked.connect(lambda checked, c=ch: self._pick_colour(c))
                 self._colour_buttons[ch] = btn
 
@@ -273,7 +277,7 @@ class PlotConfigDialog(QDialog):
 
     def _pick_colour(self, channel: str) -> None:
         current = QColor(self._colours.get(channel, _COLOUR_PRESETS[0]))
-        colour = QColorDialog.getColor(current, self, f"Colour for {channel}")
+        colour = QColorDialog.getColor(current, self, f"Colour for {_channel_legend_name(channel)}")
         if colour.isValid():
             hex_str = colour.name()
             self._colours[channel] = hex_str
