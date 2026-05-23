@@ -953,9 +953,6 @@ class PlotWidget(QWidget):
         ``DateAxisItem`` so Unix timestamps are displayed as HH:MM:SS
         instead of raw epoch numbers.
         """
-        if getattr(self, "_x_axis_mode", None) == mode:
-            return  # no-op — already in the requested mode
-
         self._x_axis_mode = mode
         plot_item = self._plot.getPlotItem()
         axis_pen = pg.mkPen(color="#888888", width=1)
