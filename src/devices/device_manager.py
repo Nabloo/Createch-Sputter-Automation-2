@@ -699,6 +699,11 @@ class DeviceManager:
         if any(history.values()):
             plot.load_history(history)
 
+        # Enforce single-unit-group constraint — all channels are initially
+        # visible after set_channels; collapse to one unit group so e.g.
+        # SQM's rate and thickness channels aren't mixed in the same plot.
+        plot._ensure_single_unit_group()
+
         # Update the y-axis label to match the new device's units
         plot._update_y_label()
 

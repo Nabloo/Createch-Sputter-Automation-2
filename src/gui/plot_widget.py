@@ -871,6 +871,46 @@ class PlotWidget(QWidget):
         non_empty = {u for u in units if u}
         return non_empty.pop() if len(non_empty) == 1 else (units.pop() if len(units) == 1 else "")
 
+    def _ensure_single_unit_group(self) -> None:
+        """Ensure only channels with the same unit are visible.
+
+        If channels span multiple unit groups (e.g. after a device switch),
+        collapses visibility to the first group so only same-unit channels
+        are plotted together.
+        """
+        if not self._channel_units or not self._channels:
+            return
+        # Group channels by unit, preserving insertion order
+        groups: Dict[str, List[str]] = {}
+        for ch in self._channels:
+            unit = self._channel_units.get(ch, "")
+            if unit not in groups:
+                groups[unit] = []
+            groups[unit].append(ch)
+        if len(groups) <= 1:
+            return
+        # Find groups that have at least one visible channel
+        groups_with_visible = [
+            u for u, chs in groups.items()
+            if any(self._channels[ch].get("visible", True) for ch in chs)
+        ]
+        if len(groups_with_visible) <= 1:
+            return
+        # Collapse to the first group (by insertion order) that has visible channels
+        keep_unit = groups_with_visible[0]
+        for unit, chs in groups.items():
+            visible = (unit == keep_unit)
+            for ch in chs:
+                cfg = self._channels.get(ch)
+                if cfg and cfg.get("visible", True) != visible:
+                    cfg["visible"] = visible
+                    curve = self._curves.get(ch)
+                    if curve is not None:
+                        if visible:
+                            self._update_curve(ch)
+                        else:
+                            curve.setData([], [])
+
     def _update_y_label(self) -> None:
         """Set the y-axis label based on the common unit of visible channels."""
         visible = self.visible_channels
