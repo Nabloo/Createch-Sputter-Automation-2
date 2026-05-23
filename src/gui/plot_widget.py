@@ -420,12 +420,42 @@ class PlotWidget(QWidget):
         # Clear any rendered data from the screen
         for curve in self._curves.values():
             curve.setData([], [])
-        # Restore the regular AxisItem — a DateAxisItem may be installed
-        # if the user was viewing logs in absolute (HH:MM:SS) mode.
-        self._set_relative_axis()
-        self._x_axis_mode = "relative"
+        # Restore the axis to match the current x-axis mode
+        self._apply_x_axis_mode()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         logger.debug("PlotWidget[%s]: switched back to live mode", self._device_id)
+
+    def set_x_axis_mode(self, mode: str) -> None:
+        """Switch x-axis display between relative (Seconds) and absolute (HH:MM:SS).
+
+        Works in both live and log-viewer mode.
+
+        Parameters
+        ----------
+        mode:
+            ``"relative"`` → seconds from t0 (label ``"Time (s)"``).
+            ``"absolute"`` → Unix epoch seconds displayed as HH:MM:SS
+            (label ``"Time"``).
+        """
+        if self._x_axis_mode == mode:
+            return
+        self._x_axis_mode = mode
+        self._apply_x_axis_mode()
+
+    def _apply_x_axis_mode(self) -> None:
+        """Apply the current x-axis mode to the axis type and re-render live curves.
+
+        In log-viewer mode the axis was already configured by ``load_log_data``
+        via ``_update_x_axis_label``, and the log curves use pre-computed x-values.
+        Only live curves need re-rendering with the new x-values.
+        """
+        self._update_x_axis_label(self._x_axis_mode)
+
+        if not self._log_mode:
+            for name, cfg in self._channels.items():
+                if cfg.get("visible", True):
+                    self._update_curve(name)
+            self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     # ------------------------------------------------------------------
     # Properties
@@ -759,6 +789,9 @@ class PlotWidget(QWidget):
             curve.setData([], [])
             return
         xs, ys = zip(*buf) if buf else ([], [])
+        # In live mode with absolute x-axis, convert relative → absolute
+        if self._x_axis_mode == "absolute" and self._t0 is not None:
+            xs = [x + self._t0 for x in xs]
         curve.setData(list(xs), list(ys))
 
     def _trim_buffers(self) -> None:
@@ -912,6 +945,7 @@ class PlotWidget(QWidget):
         if getattr(self, "_x_axis_mode", None) == mode:
             return  # no-op — already in the requested mode
 
+        self._x_axis_mode = mode
         plot_item = self._plot.getPlotItem()
         axis_pen = pg.mkPen(color="#888888", width=1)
         if mode == "absolute":

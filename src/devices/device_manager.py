@@ -783,19 +783,19 @@ class DeviceManager:
         logger.info("Cleared all %d plot(s)", len(self._plots))
 
     def _wire_toolbar(self) -> None:
-        """Enable and connect MainWindow toolbar actions."""
+        """Enable and connect MainWindow toolbar / menu actions."""
         w = self._window
         w._start_action.setEnabled(True)
         w._stop_action.setEnabled(True)
-        w._connect_action.setEnabled(True)
-        w._disconnect_action.setEnabled(True)
+        w._connect_all_menu_action.setEnabled(True)
+        w._disconnect_all_menu_action.setEnabled(True)
         w._add_plot_action.setEnabled(True)
         w._clear_all_action.setEnabled(True)
 
         w._start_action.triggered.connect(self.start_all)
         w._stop_action.triggered.connect(self.stop_all)
-        w._connect_action.triggered.connect(self.connect_all)
-        w._disconnect_action.triggered.connect(self.disconnect_all)
+        w._connect_all_menu_action.triggered.connect(self.connect_all)
+        w._disconnect_all_menu_action.triggered.connect(self.disconnect_all)
         w._add_plot_action.triggered.connect(self.add_plot)
         w._clear_all_action.triggered.connect(self.clear_all_plots)
 
@@ -836,8 +836,17 @@ class DeviceManager:
             self._load_log_file(filepath)
 
     def _on_xaxis_changed(self, _index: int) -> None:
-        """X-axis mode combo changed — re-render log data."""
-        if not self._view_mode_live and self._log_data is not None:
+        """X-axis mode combo changed — update plots.
+
+        In live mode, each plot switches its x-axis between relative seconds
+        and HH:MM:SS (DateAxisItem).  In log-viewer mode the log data is
+        re-rendered from scratch with the new mode.
+        """
+        mode = "absolute" if self._window._xaxis_combo.currentIndex() == 1 else "relative"
+        if self._view_mode_live:
+            for plot in self._plots.values():
+                plot.set_x_axis_mode(mode)
+        elif self._log_data is not None:
             self._apply_log_data_to_plots()
 
     def _on_time_range_changed(self) -> None:

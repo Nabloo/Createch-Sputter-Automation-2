@@ -131,6 +131,19 @@ class MainWindow(QMainWindow):
         self._reset_action.triggered.connect(self._on_reset_defaults)
         view_menu.addAction(self._reset_action)
 
+        # ---- Devices ----
+        devices_menu = menu_bar.addMenu("&Devices")
+
+        self._connect_all_menu_action = QAction("\u26a1  Connect &All", self)
+        self._connect_all_menu_action.setStatusTip("Connect to all configured devices")
+        self._connect_all_menu_action.setEnabled(False)
+        devices_menu.addAction(self._connect_all_menu_action)
+
+        self._disconnect_all_menu_action = QAction("\u23fb  &Disconnect All", self)
+        self._disconnect_all_menu_action.setStatusTip("Disconnect all devices")
+        self._disconnect_all_menu_action.setEnabled(False)
+        devices_menu.addAction(self._disconnect_all_menu_action)
+
         # ---- Help ----
         help_menu = menu_bar.addMenu("&Help")
 
@@ -195,31 +208,42 @@ class MainWindow(QMainWindow):
         sep1.setFixedWidth(8)
         row1_layout.addWidget(sep1)
 
-        self._connect_action = QAction("\u26a1  Connect All", self)
-        self._connect_action.setStatusTip("Connect to all configured devices")
-        self._connect_action.setEnabled(False)
-        conn_btn = QPushButton("\u26a1  Connect All")
-        conn_btn.setEnabled(False)
-        conn_btn.setFlat(True)
-        conn_btn.clicked.connect(self._connect_action.trigger)
-        self._connect_action.changed.connect(
-            lambda: conn_btn.setEnabled(self._connect_action.isEnabled())
+        self._add_plot_action = QAction("\ud83d\udcca  Add Plot", self)
+        self._add_plot_action.setStatusTip("Add a new plot widget")
+        self._add_plot_action.setEnabled(False)
+        add_btn = QPushButton("\ud83d\udcca  Add Plot")
+        add_btn.setEnabled(False)
+        add_btn.setFlat(True)
+        add_btn.clicked.connect(self._add_plot_action.trigger)
+        self._add_plot_action.changed.connect(
+            lambda: add_btn.setEnabled(self._add_plot_action.isEnabled())
         )
-        row1_layout.addWidget(conn_btn)
-        self._connect_btn = conn_btn
+        row1_layout.addWidget(add_btn)
+        self._add_plot_btn = add_btn
 
-        self._disconnect_action = QAction("\u23fb  Disconnect All", self)
-        self._disconnect_action.setStatusTip("Disconnect all devices")
-        self._disconnect_action.setEnabled(False)
-        disc_btn = QPushButton("\u23fb  Disconnect All")
-        disc_btn.setEnabled(False)
-        disc_btn.setFlat(True)
-        disc_btn.clicked.connect(self._disconnect_action.trigger)
-        self._disconnect_action.changed.connect(
-            lambda: disc_btn.setEnabled(self._disconnect_action.isEnabled())
+        self._clear_all_action = QAction("\u267b  Clear All", self)
+        self._clear_all_action.setStatusTip("Clear data from all plots")
+        self._clear_all_action.setEnabled(False)
+        clear_btn = QPushButton("\u267b  Clear All")
+        clear_btn.setEnabled(False)
+        clear_btn.setFlat(True)
+        clear_btn.clicked.connect(self._clear_all_action.trigger)
+        self._clear_all_action.changed.connect(
+            lambda: clear_btn.setEnabled(self._clear_all_action.isEnabled())
         )
-        row1_layout.addWidget(disc_btn)
-        self._disconnect_btn = disc_btn
+        row1_layout.addWidget(clear_btn)
+        self._clear_all_btn = clear_btn
+
+        # X-axis mode toggle (Seconds / HH:MM:SS) — always visible
+        xlabel = QLabel("X-axis:")
+        xlabel.setStyleSheet("padding: 0 2px 0 6px;")
+        row1_layout.addWidget(xlabel)
+
+        self._xaxis_combo = QComboBox()
+        self._xaxis_combo.addItems(["Seconds", "HH:MM:SS"])
+        self._xaxis_combo.setMinimumWidth(80)
+        self._xaxis_combo.setToolTip("X-axis display mode (live and log viewer)")
+        row1_layout.addWidget(self._xaxis_combo)
 
         sep2 = QLabel(" ")
         sep2.setFixedWidth(8)
@@ -319,15 +343,6 @@ class MainWindow(QMainWindow):
         self._to_dt.setToolTip("End of displayed time range")
         row2_layout.addWidget(self._to_dt)
 
-        xlabel = QLabel("X-axis:")
-        xlabel.setStyleSheet("padding: 0 2px 0 6px;")
-        row2_layout.addWidget(xlabel)
-        self._xaxis_combo = QComboBox()
-        self._xaxis_combo.addItems(["Seconds", "HH:MM:SS"])
-        self._xaxis_combo.setMinimumWidth(80)
-        self._xaxis_combo.setToolTip("X-axis display mode")
-        row2_layout.addWidget(self._xaxis_combo)
-
         self._log_controls = [
             self._load_btn,
             self._file_label,
@@ -335,8 +350,6 @@ class MainWindow(QMainWindow):
             self._from_dt,
             to_label,
             self._to_dt,
-            xlabel,
-            self._xaxis_combo,
         ]
         # Hidden by default (live mode)
         for w in self._log_controls:
