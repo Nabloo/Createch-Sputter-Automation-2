@@ -196,9 +196,9 @@ class TestPoll(unittest.TestCase):
     def test_poll_parses_2_sensor_response(self):
         """Realistic W response for 2 active sensors, skip dummy."""
         payload = (
-            "A00.00_"
-            "7.10_3076.190_5497894.642_"
-            "5.20_1500.500_5500000.123"
+            "A00.00 "
+            "7.10 3076.190 5497894.642 "
+            "5.20 1500.500 5500000.123"
         )
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             data = self.ctrl.poll()
@@ -216,7 +216,7 @@ class TestPoll(unittest.TestCase):
 
     def test_poll_skips_dummy_first_value(self):
         """Ensure dummy 00.00 is not in any channel data."""
-        payload = "A00.00_1.0_2.0_3.0_4.0_5.0_6.0"
+        payload = "A00.00 1.0 2.0 3.0 4.0 5.0 6.0"
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             data = self.ctrl.poll()
         self.assertAlmostEqual(data["ch1_rate"], 1.0)
@@ -227,14 +227,15 @@ class TestPoll(unittest.TestCase):
         # W response with 3 sensors worth of data (9 values), but only 2
         # configured — ch3 data must be absent from the result.
         payload = (
-            "A00.00_"
-            "1.0_10.0_100.0_"
-            "2.0_20.0_200.0_"
-            "3.0_30.0_300.0"
+            "A00.00 "
+            "1.0 10.0 100.0 "
+            "2.0 20.0 200.0 "
+            "3.0 30.0 300.0"
         )
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             data = self.ctrl.poll()
-        self.assertEqual(len(data), 12)  # 2 sensors × (3 values + 3 units)
+        # 2 sensors × (3 value keys + 3 unit keys) = 12, plus no ch3 keys
+        self.assertEqual(len(data), 12)
         self.assertIn("ch1_rate", data)
         self.assertIn("ch2_rate", data)
         self.assertNotIn("ch3_rate", data)
@@ -264,7 +265,7 @@ class TestPoll(unittest.TestCase):
     def test_poll_returns_cached_data_on_transient_failure(self):
         """Transient error returns last successful data instead of raising."""
         # First: a successful poll populates the cache
-        payload = "A00.00_1.0_10.0_100.0_2.0_20.0_200.0"
+        payload = "A00.00 1.0 10.0 100.0 2.0 20.0 200.0"
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             first = self.ctrl.poll()
         self.assertAlmostEqual(first["ch1_rate"], 1.0)
@@ -278,7 +279,7 @@ class TestPoll(unittest.TestCase):
     def test_poll_returns_cached_data_on_timeout_failure(self):
         """Timeout error returns last successful data."""
         # Populate cache with a successful poll first
-        payload = "A00.00_5.0_50.0_500.0_6.0_60.0_600.0"
+        payload = "A00.00 5.0 50.0 500.0 6.0 60.0 600.0"
         with patch.object(self.ctrl, "_sqm_send", return_value=payload):
             first = self.ctrl.poll()
 
@@ -287,3 +288,33 @@ class TestPoll(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertAlmostEqual(second["ch2_thickness"], 60.0)
 
+    def test_poll_includes_units_from_config(self):
+        """When units are configured in the device config, poll data includes them."""
+        ctrl = SQMController(_make_config(
+            number_of_sensors=1,
+            units={"rate": "\u00c5/s", "thickness": "k\u00c5", "frequency": "Hz"}
+        ))
+        payload = "A00.00 7.10 3076.190 5497894.642"
+        with patch.object(ctrl, "_sqm_send", return_value=payload):
+            data = ctrl.poll()
+        self.assertEqual(data["ch1_rate_unit"], "\u00c5/s")
+        self.assertEqual(data["ch1_thickness_unit"], "k\u00c5")
+        self.assertEqual(data["ch1_frequency_unit"], "Hz")
+        # Values still present
+        self.assertAlmostEqual(data["ch1_rate"], 7.10)
+
+    def test_poll_cache_includes_units(self):
+        """Cached data retains unit keys from the last successful poll."""
+        ctrl = SQMController(_make_config(
+            number_of_sensors=1,
+            units={"rate": "\u00c5/s", "thickness": "k\u00c5", "frequency": "Hz"}
+        ))
+        payload = "A00.00 1.0 10.0 100.0"
+        with patch.object(ctrl, "_sqm_send", return_value=payload):
+            first = ctrl.poll()
+
+        with patch.object(ctrl, "_sqm_send", side_effect=SQMProtocolError("status C")):
+            cached = ctrl.poll()
+        self.assertEqual(cached["ch1_rate_unit"], "\u00c5/s")
+        self.assertEqual(cached["ch1_thickness_unit"], "k\u00c5")
+        self.assertEqual(cached["ch1_frequency_unit"], "Hz")
