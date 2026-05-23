@@ -249,32 +249,6 @@ class MainWindow(QMainWindow):
         sep2.setFixedWidth(8)
         row1_layout.addWidget(sep2)
 
-        self._add_plot_action = QAction("\ud83d\udcca  Add Plot", self)
-        self._add_plot_action.setStatusTip("Add a new plot widget")
-        self._add_plot_action.setEnabled(False)
-        add_btn = QPushButton("\ud83d\udcca  Add Plot")
-        add_btn.setEnabled(False)
-        add_btn.setFlat(True)
-        add_btn.clicked.connect(self._add_plot_action.trigger)
-        self._add_plot_action.changed.connect(
-            lambda: add_btn.setEnabled(self._add_plot_action.isEnabled())
-        )
-        row1_layout.addWidget(add_btn)
-        self._add_plot_btn = add_btn
-
-        self._clear_all_action = QAction("\u267b  Clear All", self)
-        self._clear_all_action.setStatusTip("Clear data from all plots")
-        self._clear_all_action.setEnabled(False)
-        clear_btn = QPushButton("\u267b  Clear All")
-        clear_btn.setEnabled(False)
-        clear_btn.setFlat(True)
-        clear_btn.clicked.connect(self._clear_all_action.trigger)
-        self._clear_all_action.changed.connect(
-            lambda: clear_btn.setEnabled(self._clear_all_action.isEnabled())
-        )
-        row1_layout.addWidget(clear_btn)
-        self._clear_all_btn = clear_btn
-
         # History window spinner (applies to all plots)
         history_label = QLabel("  History:")
         row1_layout.addWidget(history_label)
