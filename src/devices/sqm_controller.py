@@ -157,7 +157,7 @@ class SQMController(BaseDevice):
 
         if resp.startswith("A"):
             resp = resp[1:]
-        parts = resp.split("_")
+        parts = resp.split(" ")
         if parts and parts[0] == "00.00":
             parts = parts[1:]
         data: Dict[str, Any] = {}
