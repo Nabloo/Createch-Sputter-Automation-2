@@ -437,8 +437,6 @@ class PlotWidget(QWidget):
             ``"absolute"`` → Unix epoch seconds displayed as HH:MM:SS
             (label ``"Time"``).
         """
-        if self._x_axis_mode == mode:
-            return
         self._x_axis_mode = mode
         self._apply_x_axis_mode()
 
