@@ -94,9 +94,18 @@ class SQMController(BaseDevice):
             if payload_len < 1:
                 raise SQMProtocolError(f"SQM-160 {self.device_id}: invalid Length {len_byte[0]}")
             remaining = payload_len + 2
-            chunk = self._serial.read(remaining)
-            if len(chunk) < remaining:
-                raise TimeoutError(f"SQM-160 {self.device_id}: short read ({len(chunk)}/{remaining})")
+            chunk = bytearray()
+            deadline = time.monotonic() + timeout
+            while len(chunk) < remaining:
+                more = self._serial.read(remaining - len(chunk))
+                if not more:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            f"SQM-160 {self.device_id}: short read "
+                            f"({len(chunk)}/{remaining})"
+                        )
+                    continue
+                chunk.extend(more)
             buf.extend(chunk)
         frame = bytes(buf)
         logger.debug("(SQM) RX: %s", frame.hex())
