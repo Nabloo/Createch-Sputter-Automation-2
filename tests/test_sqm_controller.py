@@ -261,3 +261,29 @@ class TestPoll(unittest.TestCase):
         self.assertTrue(math.isnan(data["ch1_thickness"]))
         self.assertTrue(math.isnan(data["ch1_frequency"]))
 
+    def test_poll_returns_cached_data_on_transient_failure(self):
+        """Transient error returns last successful data instead of raising."""
+        # First: a successful poll populates the cache
+        payload = "A00.00_1.0_10.0_100.0_2.0_20.0_200.0"
+        with patch.object(self.ctrl, "_sqm_send", return_value=payload):
+            first = self.ctrl.poll()
+        self.assertAlmostEqual(first["ch1_rate"], 1.0)
+
+        # Second: _sqm_send raises SQMProtocolError → cached data returned
+        with patch.object(self.ctrl, "_sqm_send", side_effect=SQMProtocolError("status C")):
+            second = self.ctrl.poll()
+        self.assertEqual(first, second)
+        self.assertAlmostEqual(second["ch1_rate"], 1.0)
+
+    def test_poll_returns_cached_data_on_timeout_failure(self):
+        """Timeout error returns last successful data."""
+        # Populate cache with a successful poll first
+        payload = "A00.00_5.0_50.0_500.0_6.0_60.0_600.0"
+        with patch.object(self.ctrl, "_sqm_send", return_value=payload):
+            first = self.ctrl.poll()
+
+        with patch.object(self.ctrl, "_sqm_send", side_effect=TimeoutError("timeout")):
+            second = self.ctrl.poll()
+        self.assertEqual(first, second)
+        self.assertAlmostEqual(second["ch2_thickness"], 60.0)
+
