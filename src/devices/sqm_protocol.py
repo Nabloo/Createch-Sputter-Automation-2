@@ -88,7 +88,7 @@ def parse_response_packet(data: bytes) -> str:
         raise SQMProtocolError("Empty response payload")
     status = payload_str[0]
     if status == "C":
-        raise SQMProtocolError("SQM-160: Invalid command (status C)")
+        raise SQMProtocolError(f"SQM-160: Invalid command (status C) for payload_str: {payload_str}")
     if status == "D":
         raise SQMProtocolError("SQM-160: Problem with data in command (status D)")
     return payload_str
