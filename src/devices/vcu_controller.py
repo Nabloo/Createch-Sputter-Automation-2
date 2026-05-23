@@ -102,9 +102,16 @@ class VCUController(BaseDevice):
         channels: list[str] = []
         for i in range(1, self._number_of_sensors + 1):
             channels.append(f"ch{i}_pressure")
-            channels.append(f"ch{i}_status_code")
             channels.append(f"ch{i}_status_text")
         return channels
+
+    @property
+    def channel_units(self) -> Dict[str, str]:
+        """All pressure plot channels share the same pressure unit."""
+        return {
+            f"ch{i}_pressure": self._pressure_unit
+            for i in range(1, self._number_of_sensors + 1)
+        }
 
     def poll(self) -> Dict[int, Dict[str, Any]]:
         """Poll all pressure sensors.

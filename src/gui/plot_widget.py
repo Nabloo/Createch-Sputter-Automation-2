@@ -104,6 +104,9 @@ class PlotWidget(QWidget):
         self._selected_device: str = device_id
 
         self._channels: Dict[str, Dict[str, Any]] = {}
+        self._channel_units: Dict[str, str] = {}
+        # device_id → {channel → unit} — allows restoring units on device switch
+        self._all_channel_units: Dict[str, Dict[str, str]] = {}
         self._buffers: Dict[str, deque] = {}
         self._curves: Dict[str, pg.PlotDataItem] = {}
 
@@ -283,6 +286,7 @@ class PlotWidget(QWidget):
         for curve in self._curves.values():
             curve.setData([], [])
         self._clear_log_curves()
+        self._plot.setLabel("left", "Value")
         logger.debug("PlotWidget[%s]: cleared", self._device_id)
 
     def set_history_seconds(self, seconds: float) -> None:
@@ -613,7 +617,6 @@ class PlotWidget(QWidget):
         t_rel = ts_float - self._t0
 
         flat = self._extract_values(data)
-        self._auto_detect_unit(data)
 
         # Always buffer data for every known channel so historical data
         # is available when the user re-enables a hidden channel.
@@ -641,6 +644,7 @@ class PlotWidget(QWidget):
             channels=channels,
             colours=colours,
             visibility=visibility,
+            channel_units=self._channel_units,
             parent=self,
         )
         if dlg.exec():
@@ -672,6 +676,7 @@ class PlotWidget(QWidget):
                         self._update_curve(name)
                     else:
                         curve.setData([], [])
+            self._update_y_label()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
             self.state_changed.emit()
 
@@ -689,7 +694,11 @@ class PlotWidget(QWidget):
             curve.setData([], [])
         self._clear_log_curves()
         self._log_data_cache.clear()
-        self._plot.setLabel("left", "Value")
+        # Restore channel_units for the new device if known
+        self._channel_units = dict(
+            self._all_channel_units.get(new_device, {})
+        )
+        self._update_y_label()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
         logger.debug("PlotWidget: switched to device %r", new_device)
@@ -760,18 +769,73 @@ class PlotWidget(QWidget):
             while buf and buf[0][0] < cutoff:
                 buf.popleft()
 
-    def _auto_detect_unit(self, data: Dict[str, Any]) -> None:
-        """Set y-axis label from the unit field in VCU-style data."""
-        if self._y_label_set:
+    def set_channel_units(self, channel_units: Dict[str, str]) -> None:
+        """Set the unit mapping for each plot channel.
+
+        Used by DeviceManager to tell the plot what units its device
+        channels use, so the y-axis label can be auto-set and the
+        config dialog can group channels by unit.
+        """
+        self._channel_units = dict(channel_units)
+        self._update_y_label()
+
+    def set_all_channel_units(
+        self, all_channel_units: Dict[str, Dict[str, str]]
+    ) -> None:
+        """Set the unit mapping for *all* devices.
+
+        Stored so that when the user switches the plot to a different
+        device, the correct channel_units are automatically restored.
+        """
+        self._all_channel_units = {
+            did: dict(units) for did, units in all_channel_units.items()
+        }
+        # If we already have a channel_units dict for the current device,
+        # immediately apply it (in case the call arrives after device
+        # selection but before data starts flowing).
+        current = self._all_channel_units.get(
+            self._selected_device or self._device_id
+        )
+        if current and not self._channel_units:
+            self._channel_units = dict(current)
+            self._update_y_label()
+
+    @staticmethod
+    def _channel_display_name(channel: str) -> str:
+        """Extract a human-readable display name from a channel key.
+
+        Examples::
+            ch1_pressure  → "Pressure"
+            ch1_rate      → "Rate"
+            ch2_thickness → "Thickness"
+        """
+        parts = channel.split("_", 1)
+        if len(parts) > 1 and parts[0].startswith("ch") and parts[0][2:].isdigit():
+            name = parts[1]
+        else:
+            name = channel
+        return name.replace("_", " ").title()
+
+    def _unit_for_channels(self, channels: List[str]) -> str:
+        """Return the common unit string for *channels*, or empty if not uniform."""
+        units = {self._channel_units.get(ch, "") for ch in channels}
+        non_empty = {u for u in units if u}
+        return non_empty.pop() if len(non_empty) == 1 else (units.pop() if len(units) == 1 else "")
+
+    def _update_y_label(self) -> None:
+        """Set the y-axis label based on the common unit of visible channels."""
+        visible = self.visible_channels
+        if not visible:
             return
-        if not (data and all(isinstance(v, dict) for v in data.values())):
-            return
-        for ch_data in data.values():
-            unit = ch_data.get("unit", "")
-            if unit:
-                self._plot.setLabel("left", f"Pressure ({unit})")
-                self._y_label_set = True
-                return
+
+        unit = self._unit_for_channels(visible)
+        name = self._channel_display_name(visible[0])
+
+        if unit:
+            self._plot.setLabel("left", f"{name} [{unit}]")
+        else:
+            self._plot.setLabel("left", name)
+        self._y_label_set = True
 
     # ------------------------------------------------------------------
     # Log-viewer helpers

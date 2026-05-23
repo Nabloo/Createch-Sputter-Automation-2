@@ -61,6 +61,16 @@ class SQMController(BaseDevice):
         return list(self._channels)
 
     @property
+    def channel_units(self) -> Dict[str, str]:
+        """Each sensor field (rate/thickness/frequency) has its own unit."""
+        units: Dict[str, str] = {}
+        for n in range(1, self._num_sensors + 1):
+            units[f"ch{n}_rate"] = self._units.get("rate", "")
+            units[f"ch{n}_thickness"] = self._units.get("thickness", "")
+            units[f"ch{n}_frequency"] = self._units.get("frequency", "")
+        return units
+
+    @property
     def address(self) -> int:
         return self._address
 
@@ -151,7 +161,7 @@ class SQMController(BaseDevice):
         """
         try:
             resp = self._sqm_send("W")
-        except SQMProtocolError as exc:
+        except (SQMProtocolError, TimeoutError, ConnectionError, OSError, serial.SerialException) as exc:
             logger.debug("%s poll transient failure — %s; using cached values", self.device_id, exc)
             return dict(self._last_poll_data)
 

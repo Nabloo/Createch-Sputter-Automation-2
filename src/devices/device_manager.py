@@ -493,6 +493,13 @@ class DeviceManager:
         save_config(self._config)
         logger.info("Baudrate for %s changed to %d", device_id, new_baudrate)
 
+    def _build_channel_units_map(self) -> Dict[str, Dict[str, str]]:
+        """Build a device_id → {channel → unit} map for all registered devices."""
+        return {
+            did: dev.channel_units
+            for did, dev in self._devices.items()
+        }
+
     def _setup_plots(self) -> None:
         """Create PlotWidget instances from config and wire to DataStore.
 
@@ -501,6 +508,7 @@ class DeviceManager:
         was visible when the config was saved.
         """
         device_ids = list(self._devices.keys())
+        all_channel_units = self._build_channel_units_map()
         for pc in get_plot_configs(self._config):
             device_id = pc.get("device_id", "")
             dock_id = pc.get("dock_id", f"plot_{device_id}")
@@ -542,6 +550,9 @@ class DeviceManager:
             plot.set_available_devices(device_ids)
             if all_channels:
                 plot.set_channels(all_channels, merged_colours or None)
+
+            # Push channel-unit mapping for all devices (enables unit grouping)
+            plot.set_all_channel_units(all_channel_units)
 
             # Restore visibility state from saved config.
             visibility = pc.get("visibility")
@@ -585,6 +596,7 @@ class DeviceManager:
         default_device = device_ids[0]
         dev = self._devices.get(default_device)
         channels = list(dev.plot_channels) if dev else ["ch1_pressure"]
+        all_channel_units = self._build_channel_units_map()
 
         # Inherit history and x-axis origin from existing plots
         existing = list(self._plots.values())
@@ -605,6 +617,7 @@ class DeviceManager:
         )
         plot.set_available_devices(device_ids)
         plot.set_channels(channels)
+        plot.set_all_channel_units(all_channel_units)
 
         self._window.dock_manager.add_panel(
             panel_id=dock_id,

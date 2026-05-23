@@ -71,6 +71,16 @@ class BaseDevice(ABC):
         ...
 
     @property
+    def channel_units(self) -> Dict[str, str]:
+        """Mapping of plot-channel name → unit string.
+
+        Used by the plot widget to group channels by unit and to set the
+        y-axis label (e.g. ``{"ch1_pressure": "mbar"}``).
+        Returns an empty dict by default.
+        """
+        return {}
+
+    @property
     def connected(self) -> bool:
         return self._connected
 
