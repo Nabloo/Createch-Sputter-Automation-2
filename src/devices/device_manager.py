@@ -567,6 +567,10 @@ class DeviceManager:
             plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
             # Persist state changes (device switch, channel config, etc.)
             plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
+            # Re-configure channels when the device dropdown changes
+            plot.device_changed.connect(
+                lambda new_did, did=dock_id: self._on_plot_device_changed(did, new_did)
+            )
 
             self._window.dock_manager.add_panel(dock_id, "", plot, area=area, allowed_areas=allowedAreas)
             self._store.subscribe(plot.push_data)
@@ -641,6 +645,10 @@ class DeviceManager:
         plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
         # Persist state changes
         plot.state_changed.connect(lambda did=dock_id: self._on_plot_state_changed(did))
+        # Re-configure channels when the device dropdown changes
+        plot.device_changed.connect(
+            lambda new_did, did=dock_id: self._on_plot_device_changed(did, new_did)
+        )
 
         if not self._view_mode_live:
             self._apply_log_data_to_plots()
@@ -663,8 +671,45 @@ class DeviceManager:
         self._persist_plots()
         logger.info("Removed plot %r", dock_id)
 
+    def _on_plot_device_changed(self, dock_id: str, new_device_id: str) -> None:
+        """Called when a plot's device dropdown changes.
+
+        Re-configures the plot's channels to match the new device, and
+        replays historical data from the DataStore so the plot doesn't
+        start blank.
+        """
+        plot = self._plots.get(dock_id)
+        if plot is None:
+            return
+        dev = self._devices.get(new_device_id)
+        if dev is None:
+            return
+
+        # Re-configure channels for the new device
+        plot.set_channels(list(dev.plot_channels))
+
+        # Push updated channel_units for all devices
+        plot.set_all_channel_units(self._build_channel_units_map())
+
+        # Replay historical data from DataStore so the plot fills up
+        # immediately instead of waiting for the next poll interval.
+        history: Dict[str, list] = {}
+        for ch in dev.plot_channels:
+            history[ch] = self._store.get_history(new_device_id, ch)
+        if any(history.values()):
+            plot.load_history(history)
+
+        # Update the y-axis label to match the new device's units
+        plot._update_y_label()
+
+        self._persist_plots()
+        logger.debug(
+            "Plot %r switched to %s — %d channel(s)",
+            dock_id, new_device_id, len(dev.plot_channels),
+        )
+
     def _on_plot_state_changed(self, dock_id: str) -> None:
-        """Called when a plot's device, channels or visibility changes."""
+        """Called when a plot's visibility or colours change."""
         self._persist_plots()
 
     def _sync_history(self, seconds: float) -> None:
