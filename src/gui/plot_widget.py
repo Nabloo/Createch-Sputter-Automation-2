@@ -445,11 +445,24 @@ class PlotWidget(QWidget):
     def _apply_x_axis_mode(self) -> None:
         """Apply the current x-axis mode to the axis type and re-render live curves.
 
+        This bypasses ``_update_x_axis_label`` because it may return early when
+        ``_x_axis_mode`` already equals the requested mode (set_x_axis_mode sets
+        it before calling this method).  We always need the axis swapped here.
+
         In log-viewer mode the axis was already configured by ``load_log_data``
-        via ``_update_x_axis_label``, and the log curves use pre-computed x-values.
-        Only live curves need re-rendering with the new x-values.
+        via ``_update_x_axis_label``, so only live curves need re-rendering.
         """
-        self._update_x_axis_label(self._x_axis_mode)
+        mode = self._x_axis_mode
+        plot_item = self._plot.getPlotItem()
+        axis_pen = pg.mkPen(color="#888888", width=1)
+        if mode == "absolute":
+            axis = pg.DateAxisItem(orientation="bottom")
+            plot_item.setAxisItems({"bottom": axis})
+            axis.setPen(axis_pen)
+            axis.setTextPen(axis_pen)
+            self._plot.setLabel("bottom", "Time")
+        else:
+            self._set_relative_axis(axis_pen)
 
         if not self._log_mode:
             for name, cfg in self._channels.items():
