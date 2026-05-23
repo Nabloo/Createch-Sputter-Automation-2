@@ -438,9 +438,6 @@ class PlotWidget(QWidget):
         # Clear any rendered data from the screen
         for curve in self._curves.values():
             curve.setData([], [])
-        # Restore the axis to match the current x-axis mode
-        self._apply_x_axis_mode()
-        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         logger.debug("PlotWidget[%s]: switched back to live mode", self._device_id)
 
     def set_x_axis_mode(self, mode: str) -> None:

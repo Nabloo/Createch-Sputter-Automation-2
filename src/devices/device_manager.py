@@ -16,6 +16,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+import pyqtgraph as pg
 from PySide6.QtCore import QDateTime, Qt, QTimer
 from PySide6.QtWidgets import QFileDialog
 
@@ -293,6 +294,11 @@ class DeviceManager:
                     history[ch] = self._store.get_history(plot.device_id, ch)
                 if any(history.values()):
                     plot.load_history(history)
+
+                # Re-enable Y-axis auto-range now that curves have data (or are empty).
+                # Runs even when history is empty so auto-range isn't left disabled
+                # after clear_log_data removed the old enableAutoRange call.
+                plot.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
 
         logger.info("View mode switched to %s", "Live" if live else "View Log")
 
