@@ -112,13 +112,15 @@ class SQMController(BaseDevice):
         return parse_response_packet(frame)
 
     def _after_connect(self) -> None:
-        try:
-            resp = self._sqm_send("@")
-            self._version = resp[1:] if resp.startswith("A") else resp
-            logger.info("%s: firmware = %s", self.device_id, self._version)
-        except (SQMProtocolError, TimeoutError, ConnectionError, OSError, serial.SerialException):
-            logger.warning("%s: could not read firmware version", self.device_id)
-            self._version = None
+        # Firmware query is the connection verification step — failure means
+        # the device is not actually responding, even though the serial port
+        # opened.  Let the exception propagate so connect() marks as
+        # disconnected.
+        resp = self._sqm_send("@")
+        self._version = resp[1:] if resp.startswith("A") else resp
+        logger.info("%s: firmware = %s", self.device_id, self._version)
+
+        # Channel count is secondary — graceful failure ok.
         try:
             resp = self._sqm_send("J")
             if resp.startswith("A") and resp[1:].isdigit():

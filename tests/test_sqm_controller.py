@@ -169,8 +169,11 @@ class TestAfterConnect(unittest.TestCase):
     def test_handles_firmware_failure_gracefully(self):
         with patch.object(self.ctrl, "_sqm_send") as mock_send:
             mock_send.side_effect = TimeoutError("no response")
-            self.ctrl._after_connect()
+            with self.assertRaises(TimeoutError):
+                self.ctrl._after_connect()
+            # firmware query failed before assignment — stays None from init
             self.assertIsNone(self.ctrl.firmware_version)
+            # J command was never attempted — stays None from init
             self.assertIsNone(self.ctrl.sensor_count)
 
     def test_handles_version_without_A_prefix(self):

@@ -108,6 +108,13 @@ class BaseDevice(ABC):
                 self._serial = None
                 self._connected = False
                 return False
+            except Exception:
+                logger.error(
+                    "Connection verification failed for %s on %s — device not responding",
+                    self.device_id, self._port,
+                )
+                self.disconnect()
+                return False
 
     def __enter__(self) -> "BaseDevice":
         self.connect()
