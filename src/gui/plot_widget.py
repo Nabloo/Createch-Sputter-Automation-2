@@ -708,9 +708,7 @@ class PlotWidget(QWidget):
             for ch_name in self._channels:
                 self._log_data_cache[ch_name] = ([], [])
                 self._render_log_channel(ch_name)
-            self._update_x_axis_label(x_axis_mode)
-            self._x_axis_mode = x_axis_mode
-            self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+            self.set_x_axis_mode(x_axis_mode)
             return
 
         filtered_ts = [timestamps[i] for i in indices]
@@ -736,9 +734,7 @@ class PlotWidget(QWidget):
                 self._log_data_cache[ch_name] = (clean_xs, clean_ys)
             self._render_log_channel(ch_name)
 
-        self._update_x_axis_label(x_axis_mode)
-        self._x_axis_mode = x_axis_mode
-        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        self.set_x_axis_mode(x_axis_mode)
         logger.info(
             "PlotWidget[%s]: loaded log %s — %d points in range [%s … %s]",
             self._device_id,
@@ -792,16 +788,17 @@ class PlotWidget(QWidget):
         axis_pen = pg.mkPen(color="#888888", width=1)
         if mode == "absolute":
             axis = pg.DateAxisItem(orientation="bottom")
-            plot_item.setAxisItems({"bottom": axis})
-            axis.setPen(axis_pen)
-            axis.setTextPen(axis_pen)
             self._plot.setLabel("bottom", "Time")
         else:
-            self._set_relative_axis(axis_pen)
+            """Install a regular ``AxisItem`` for relative-seconds display."""
+            axis = pg.AxisItem(orientation="bottom")
+            self._plot.setLabel("bottom", "Time (s)")
 
-        if not self._log_mode:
-            self._refresh_curves()
-            self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
+        plot_item.setAxisItems({"bottom": axis})
+        axis.setPen(axis_pen)
+        axis.setTextPen(axis_pen)
+        self._refresh_curves()
+        self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     # ------------------------------------------------------------------
     # Properties
@@ -1405,31 +1402,3 @@ class PlotWidget(QWidget):
             self._plot.removeItem(scatter)
         self._log_scatters.clear()
 
-    def _update_x_axis_label(self, mode: str) -> None:
-        """Set the x-axis label and axis type based on the current mode.
-
-        In "absolute" mode the bottom axis is replaced with a
-        ``DateAxisItem`` so Unix timestamps are displayed as HH:MM:SS
-        instead of raw epoch numbers.
-        """
-        self._x_axis_mode = mode
-        plot_item = self._plot.getPlotItem()
-        axis_pen = pg.mkPen(color="#888888", width=1)
-        if mode == "absolute":
-            axis = pg.DateAxisItem(orientation="bottom")
-            plot_item.setAxisItems({"bottom": axis})
-            axis.setPen(axis_pen)
-            axis.setTextPen(axis_pen)
-            self._plot.setLabel("bottom", "Time")
-        else:
-            self._set_relative_axis(axis_pen)
-
-    def _set_relative_axis(self, axis_pen=None) -> None:
-        """Install a regular ``AxisItem`` for relative-seconds display."""
-        if axis_pen is None:
-            axis_pen = pg.mkPen(color="#888888", width=1)
-        axis = pg.AxisItem(orientation="bottom")
-        self._plot.getPlotItem().setAxisItems({"bottom": axis})
-        axis.setPen(axis_pen)
-        axis.setTextPen(axis_pen)
-        self._plot.setLabel("bottom", "Time (s)")
