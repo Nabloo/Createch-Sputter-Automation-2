@@ -36,7 +36,7 @@ class TestDataLogger(TestCase):
 
     def test_filename_format(self) -> None:
         dl = DataLogger(self._config, self._store)
-        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         dl._on_data("VCU-0", datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc), data)
         dl.shutdown()
         files = os.listdir(self._tmpdir)
@@ -49,8 +49,8 @@ class TestDataLogger(TestCase):
     def test_headers_vcu_style(self) -> None:
         dl = DataLogger(self._config, self._store)
         data = {
-            1: {"pressure": 1.0e-5, "status_code": 0, "status_text": "OK", "unit": "mbar"},
-            2: {"pressure": 2.0e-6, "status_code": 0, "status_text": "OK", "unit": "mbar"},
+            1: {"pressure": 1.0e-5, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"},
+            2: {"pressure": 2.0e-6, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"},
         }
         dl._on_data("VCU-0", datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc), data)
         dl.shutdown()
@@ -69,7 +69,7 @@ class TestDataLogger(TestCase):
         self.assertIn("VCU-0_ch1_status_code", headers)
         self.assertIn("VCU-0_ch1_status_text", headers)
         self.assertIn("VCU-0_ch2_pressure", headers)
-        self.assertNotIn("VCU-0_ch1_unit", headers)
+        self.assertNotIn("VCU-0_ch1_pressure_unit", headers)
 
         # Row 2: units
         units = rows[1]
@@ -82,7 +82,7 @@ class TestDataLogger(TestCase):
 
     def test_row_values_vcu_style(self) -> None:
         dl = DataLogger(self._config, self._store)
-        data = {1: {"pressure": 1.23e-5, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data = {1: {"pressure": 1.23e-5, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         ts = datetime(2025, 3, 10, 14, 30, 15, tzinfo=timezone.utc)
         dl._on_data("VCU-0", ts, data)
         dl.shutdown()
@@ -152,7 +152,7 @@ class TestDataLogger(TestCase):
 
     def test_daily_rotation_creates_new_file(self) -> None:
         dl = DataLogger(self._config, self._store)
-        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         dl._on_data("VCU-0", datetime(2025, 5, 1, 23, 59, 0, tzinfo=timezone.utc), data)
         dl._on_data("VCU-0", datetime(2025, 5, 2, 0, 1, 0, tzinfo=timezone.utc), data)
         dl.shutdown()
@@ -163,7 +163,7 @@ class TestDataLogger(TestCase):
 
     def test_daily_rotation_same_day_same_file(self) -> None:
         dl = DataLogger(self._config, self._store)
-        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         dl._on_data("VCU-0", datetime(2025, 7, 7, 8, 0, 0, tzinfo=timezone.utc), data)
         dl._on_data("VCU-0", datetime(2025, 7, 7, 12, 0, 0, tzinfo=timezone.utc), data)
         dl._on_data("VCU-0", datetime(2025, 7, 7, 18, 0, 0, tzinfo=timezone.utc), data)
@@ -183,7 +183,7 @@ class TestDataLogger(TestCase):
 
     def test_flush_writes_buffered_data(self) -> None:
         dl = DataLogger(self._config, self._store)
-        data = {1: {"pressure": 5.0, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data = {1: {"pressure": 5.0, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         dl._on_data("VCU-0", datetime(2025, 8, 8, 12, 0, 0, tzinfo=timezone.utc), data)
         dl.flush()
         files = os.listdir(self._tmpdir)
@@ -198,7 +198,7 @@ class TestDataLogger(TestCase):
         dl = DataLogger(self._config, self._store)
         dl._flush_interval = 9999.0
         for i in range(10):
-            data = {1: {"pressure": float(i), "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+            data = {1: {"pressure": float(i), "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
             dl._on_data("VCU-0", datetime(2025, 9, 9, 12, 0, i, tzinfo=timezone.utc), data)
         dl.shutdown()
         files = os.listdir(self._tmpdir)
@@ -211,7 +211,7 @@ class TestDataLogger(TestCase):
     def test_disabled_logging_creates_no_files(self) -> None:
         config = {"logging": {"enabled": False, "directory": self._tmpdir}}
         dl = DataLogger(config, self._store)
-        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         dl._on_data("VCU-0", datetime(2025, 10, 10, 12, 0, 0, tzinfo=timezone.utc), data)
         dl.shutdown()
         csv_files = [f for f in os.listdir(self._tmpdir) if f.endswith(".csv")]
@@ -223,7 +223,7 @@ class TestDataLogger(TestCase):
 
     def test_multiple_devices_same_file(self) -> None:
         dl = DataLogger(self._config, self._store)
-        data_vcu = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "unit": "mbar"}}
+        data_vcu = {1: {"pressure": 1.0, "status_code": 0, "status_text": "OK", "pressure_unit": "mbar"}}
         data_sqm = {
             "ch1_rate": 5.0, "ch1_rate_unit": "Hz",
             "ch1_thickness": 100.0, "ch1_thickness_unit": "kA",

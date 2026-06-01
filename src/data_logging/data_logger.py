@@ -249,19 +249,23 @@ class DataLogger:
         units: List[str] = [""]
 
         if data and all(isinstance(v, dict) for v in data.values()):
-            # Dict-of-dicts (VCU style): keys are channel numbers
+            # Dict-of-dicts (VCU style): keys are channel numbers.
+            # Same _unit suffix convention as the flat-dict path:
+            # any field ending in "_unit" is metadata and skipped;
+            # its value becomes the unit for the corresponding base field.
             for ch_key in sorted(data.keys()):
                 ch_data = data[ch_key]
-                # VCU stores the unit as "pressure_unit", not "unit"
-                unit = ch_data.get("pressure_unit", "")
+                # Build unit map from _unit-suffixed fields
+                unit_map: Dict[str, str] = {}
                 for field in sorted(ch_data.keys()):
-                    if field == "pressure_unit":
+                    if field.endswith("_unit"):
+                        base = field[:-5]
+                        unit_map[base] = str(ch_data[field]) if ch_data[field] else ""
+                for field in sorted(ch_data.keys()):
+                    if field.endswith("_unit"):
                         continue
                     headers.append(f"{device_id}_ch{ch_key}_{field}")
-                    if field == "pressure" and unit:
-                        units.append(unit)
-                    else:
-                        units.append("")
+                    units.append(unit_map.get(field, ""))
         else:
             # Flat dict (SQM style): keys like "ch1_rate", "ch1_rate_unit", …
             # Group non-unit fields and pair them with their units.
@@ -297,7 +301,7 @@ class DataLogger:
             for ch_key in sorted(data.keys()):
                 ch_data = data[ch_key]
                 for field in sorted(ch_data.keys()):
-                    if field == "pressure_unit":
+                    if field.endswith("_unit"):
                         continue
                     row.append(ch_data[field])
         else:
