@@ -9,6 +9,7 @@ Supports two rendering modes:
   curves into separate ``PlotDataItem`` segments.
 """
 
+import bisect
 import logging
 import math
 import time
@@ -145,6 +146,14 @@ class PlotWidget(QWidget):
         # channel_name → single ScatterPlotItem for log-viewer (decimated across all segments)
         self._log_scatters: Dict[str, pg.ScatterPlotItem] = {}
 
+        # ---- Hover tooltip --------------------------------------------------
+        self._tooltip: Optional[pg.TextItem] = None
+        self._mouse_proxy: Optional[pg.SignalProxy] = None
+        # Cached x/y lists per channel (populated in _update_curve,
+        # read in _on_mouse_moved to avoid re-allocating from deques at 60 Hz)
+        self._cached_xs: Dict[str, List[float]] = {}
+        self._cached_ys: Dict[str, List[float]] = {}
+
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -220,6 +229,21 @@ class PlotWidget(QWidget):
 
         # Re-decimate scatter markers when the user zooms/pans
         self._plot.getViewBox().sigRangeChanged.connect(self._on_view_range_changed)
+
+        # Hover tooltip for data-point values
+        self._tooltip = pg.TextItem(
+            "", anchor=(0.5, 1.0), color="#ffffff",
+            fill=pg.mkBrush(30, 30, 30, 200),
+        )
+        self._tooltip.setZValue(100)
+        self._tooltip.hide()
+        self._plot.addItem(self._tooltip)
+
+        self._mouse_proxy = pg.SignalProxy(
+            self._plot.scene().sigMouseMoved,
+            rateLimit=60,
+            slot=self._on_mouse_moved,
+        )
 
     # ------------------------------------------------------------------
     # Viewport-aware scatter decimation
@@ -318,6 +342,86 @@ class PlotWidget(QWidget):
                 dec_xs, dec_ys = self._decimate_viewport(xs_list, ys_list)
                 scatter.setData(dec_xs, dec_ys)
 
+    def _on_mouse_moved(self, evt) -> None:
+        """Track mouse and show a tooltip above the nearest data point.
+
+        Searches through all *visible* channels' raw data (live buffers or
+        log-data cache) to find the point closest to the cursor.  The
+        tooltip is only shown when the nearest point falls within 3 %
+        of the visible x-range.
+        """
+        if self._tooltip is None:
+            return
+        pos = evt[0]
+        if not self._plot.sceneBoundingRect().contains(pos):
+            self._tooltip.hide()
+            return
+
+        mouse_point = self._plot.getViewBox().mapSceneToView(pos)
+        mx, my = mouse_point.x(), mouse_point.y()
+
+        # ---- determine search threshold from visible x-range ----
+        vb = self._plot.getViewBox()
+        view_range = vb.viewRange()
+        if not view_range or len(view_range[0]) < 2:
+            self._tooltip.hide()
+            return
+        x_min, x_max = view_range[0][0], view_range[0][1]
+        threshold = (x_max - x_min) * 0.03  # 3 % of visible x-range
+
+        best_channel: Optional[str] = None
+        best_x: Optional[float] = None
+        best_y: Optional[float] = None
+        best_dist = float("inf")
+
+        for name in self.visible_channels:
+            if self._log_mode:
+                xs, ys = self._log_data_cache.get(name, ([], []))
+            else:
+                xs = self._cached_xs.get(name)
+                ys = self._cached_ys.get(name)
+                if xs is None or ys is None:
+                    continue
+            if not xs:
+                continue
+
+            # Binary search for the nearest x-index
+            idx = bisect.bisect_left(xs, mx)
+            for i in (idx, idx - 1):
+                if 0 <= i < len(xs):
+                    dx = xs[i] - mx
+                    dy = ys[i] - my
+                    dist = (dx * dx + dy * dy) ** 0.5
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_channel = name
+                        best_x = xs[i]
+                        best_y = ys[i]
+
+        if best_channel is None or best_dist >= threshold:
+            self._tooltip.hide()
+            return
+
+        # ---- format tooltip text ----
+        channel_name = _channel_legend_name(best_channel)
+        if self._x_axis_mode == "absolute":
+            x_str = datetime.fromtimestamp(best_x).strftime("%H:%M:%S")
+        else:
+            x_str = f"{best_x:.2f} s"
+        unit = self._channel_units.get(best_channel, "")
+        y_str = f"{best_y:.3g}" if not unit else f"{best_y:.3g} {unit}"
+        text = f"{channel_name}\n{x_str}, {y_str}"
+        self._tooltip.setText(text)
+
+        # ---- position above the data point ----
+        # anchor (0.5, 1.0) places text centre-bottom at pos, so text
+        # appears above the point.  Add a small vertical offset so the
+        # marker doesn't overlap the label.
+        y_range = view_range[1][1] - view_range[1][0] if view_range[1][1] > view_range[1][0] else 1.0
+        y_offset = y_range * 0.04
+        self._tooltip.setPos(best_x, best_y + y_offset)
+        self._tooltip.show()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -415,6 +519,8 @@ class PlotWidget(QWidget):
             curve.setData([], [])
         for scatter in self._scatters.values():
             scatter.setData([], [])
+        self._cached_xs.clear()
+        self._cached_ys.clear()
         self._clear_log_curves()
         self._plot.setLabel("left", "Value")
         logger.debug("PlotWidget[%s]: cleared", self._device_id)
@@ -485,6 +591,8 @@ class PlotWidget(QWidget):
         self._clear_btn.setEnabled(False)
         self._clear_log_curves()
         self._log_data_cache.clear()
+        self._cached_xs.clear()
+        self._cached_ys.clear()
         # Clear live curves from the screen
         for curve in self._curves.values():
             curve.setData([], [])
@@ -550,6 +658,8 @@ class PlotWidget(QWidget):
         self._clear_btn.setEnabled(True)
         self._clear_log_curves()
         self._log_data_cache.clear()
+        self._cached_xs.clear()
+        self._cached_ys.clear()
         # Clear any rendered data from the screen
         for curve in self._curves.values():
             curve.setData([], [])
@@ -891,6 +1001,8 @@ class PlotWidget(QWidget):
             curve.setData([], [])
         for scatter in self._scatters.values():
             scatter.setData([], [])
+        self._cached_xs.clear()
+        self._cached_ys.clear()
         self._clear_log_curves()
         self._log_data_cache.clear()
         # Restore channel_units for the new device if known
@@ -950,6 +1062,8 @@ class PlotWidget(QWidget):
     def _remove_channel(self, name: str) -> None:
         self._channels.pop(name, None)
         self._buffers.pop(name, None)
+        self._cached_xs.pop(name, None)
+        self._cached_ys.pop(name, None)
         curve = self._curves.pop(name, None)
         if curve is not None:
             self._plot.removeItem(curve)
@@ -980,6 +1094,11 @@ class PlotWidget(QWidget):
         # In live mode with absolute x-axis, convert relative → absolute
         if self._x_axis_mode == "absolute" and self._t0 is not None:
             xs_list = [x + self._t0 for x in xs_list]
+
+        # Cache for hover tooltip (before NaN gap insertion mutates the lists)
+        self._cached_xs[channel_name] = list(xs_list)
+        self._cached_ys[channel_name] = list(ys_list)
+
         # Insert NaN at gaps > threshold to create visual line breaks
         gap_s = self._gap_threshold_s
         i = 1
