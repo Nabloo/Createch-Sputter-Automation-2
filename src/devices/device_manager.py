@@ -271,6 +271,7 @@ class DeviceManager:
             w._mode_toggle.setText("\u26ab  Live")
             w._mode_toggle.blockSignals(False)
             w.set_log_controls_visible(True)
+            w._clear_all_action.setEnabled(False)
 
             # If a log file was previously loaded, display it
             if self._log_data is not None:
@@ -282,6 +283,7 @@ class DeviceManager:
             w._mode_toggle.setText("\u26ab  View Log")
             w._mode_toggle.blockSignals(False)
             w.set_log_controls_visible(False)
+            w._clear_all_action.setEnabled(True)
 
             # Restore live rendering on all plots
             for plot in self._plots.values():
