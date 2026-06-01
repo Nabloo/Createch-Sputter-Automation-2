@@ -40,6 +40,8 @@ TRACE_COLOURS = [
 ]
 
 _DEFAULT_GAP_THRESHOLD_S = 60.0
+MAX_SCATTER_PX_SPACING = 30  # target pixels between scatter markers
+SCATTER_SYMBOL_SIZE = 2    # dot radius in pixels
 
 
 def _channel_legend_name(channel: str) -> str:
@@ -138,6 +140,10 @@ class PlotWidget(QWidget):
         self._log_curves: Dict[str, List[pg.PlotDataItem]] = {}
         self._x_axis_mode: str = "relative"  # "relative" | "absolute"
         self._y_log: bool = False  # y-axis log scale
+        # channel_name → ScatterPlotItem (decimated data-point markers)
+        self._scatters: Dict[str, pg.ScatterPlotItem] = {}
+        # channel_name → single ScatterPlotItem for log-viewer (decimated across all segments)
+        self._log_scatters: Dict[str, pg.ScatterPlotItem] = {}
 
         self._build_ui()
         self._data_arrived.connect(self._on_data_arrived)
@@ -212,6 +218,97 @@ class PlotWidget(QWidget):
 
         layout.addWidget(self._plot, stretch=1)
 
+        # Re-decimate scatter markers when the user zooms/pans
+        self._plot.getViewBox().sigRangeChanged.connect(self._on_view_range_changed)
+
+    # ------------------------------------------------------------------
+    # Viewport-aware scatter decimation
+    # ------------------------------------------------------------------
+
+    def _decimate_viewport(
+        self, xs: List[float], ys: List[float]
+    ) -> Tuple[List[float], List[float]]:
+        """Decimate to visible x-range, spacing markers ~8 px apart.
+
+        Filters (xs, ys) to the ViewBox's visible x-range, then evenly
+        subsamples so markers are at most one per *MAX_SCATTER_PX_SPACING*
+        pixels.  Returns the original list when there is no visible
+        range yet (ViewBox not ready) or all points are outside view.
+        """
+        if not xs:
+            return xs, ys
+        vb = self._plot.getViewBox()
+        if vb is None:
+            return xs, ys
+        view_range = vb.viewRange()
+        if not view_range or len(view_range[0]) < 2:
+            return xs, ys
+        x_min, x_max = view_range[0][0], view_range[0][1]
+        if x_min >= x_max:
+            return xs, ys
+
+        # Filter to visible x-range (use binary-search-friendly assumptions
+        # — the data is sorted in ascending x order).
+        vis_x: List[float] = []
+        vis_y: List[float] = []
+        for x, y in zip(xs, ys):
+            if math.isnan(y):
+                continue
+            if x_min <= x <= x_max:
+                vis_x.append(x)
+                vis_y.append(y)
+
+        if not vis_x:
+            return [], []
+
+        # One marker every ~px_spacing pixels
+        px_width = vb.width()
+        if px_width <= 0:
+            px_width = 800
+        max_points = max(20, int(px_width / MAX_SCATTER_PX_SPACING))
+
+        n = len(vis_x)
+        if n <= max_points:
+            return vis_x, vis_y
+
+        stride = n / max_points
+        result_x: List[float] = []
+        result_y: List[float] = []
+        idx = 0.0
+        while idx < n:
+            i = int(idx)
+            result_x.append(vis_x[i])
+            result_y.append(vis_y[i])
+            idx += stride
+        return result_x, result_y
+
+    def _on_view_range_changed(self) -> None:
+        """Re-decimate scatter markers after zoom/pan."""
+        if self._log_mode:
+            for name in self._channels:
+                scatter = self._log_scatters.get(name)
+                if scatter is None:
+                    continue
+                xs, ys = self._log_data_cache.get(name, ([], []))
+                if xs:
+                    dec_xs, dec_ys = self._decimate_viewport(xs, ys)
+                    scatter.setData(dec_xs, dec_ys)
+        else:
+            for name in self.visible_channels:
+                scatter = self._scatters.get(name)
+                if scatter is None:
+                    continue
+                buf = self._buffers.get(name)
+                if not buf:
+                    scatter.setData([], [])
+                    continue
+                xs_list = [p[0] for p in buf]
+                ys_list = [p[1] for p in buf]
+                if self._x_axis_mode == "absolute" and self._t0 is not None:
+                    xs_list = [x + self._t0 for x in xs_list]
+                dec_xs, dec_ys = self._decimate_viewport(xs_list, ys_list)
+                scatter.setData(dec_xs, dec_ys)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -263,6 +360,8 @@ class PlotWidget(QWidget):
                 self._channels[name]["colour"] = colour
                 if name in self._curves:
                     self._curves[name].setPen(pg.mkPen(color=colour, width=2))
+                if name in self._scatters:
+                    self._scatters[name].setBrush(pg.mkBrush(colour))
             else:
                 self._add_channel(name, colour)
 
@@ -305,6 +404,8 @@ class PlotWidget(QWidget):
             buf.clear()
         for curve in self._curves.values():
             curve.setData([], [])
+        for scatter in self._scatters.values():
+            scatter.setData([], [])
         self._clear_log_curves()
         self._plot.setLabel("left", "Value")
         logger.debug("PlotWidget[%s]: cleared", self._device_id)
@@ -443,6 +544,8 @@ class PlotWidget(QWidget):
         # Clear any rendered data from the screen
         for curve in self._curves.values():
             curve.setData([], [])
+        for scatter in self._scatters.values():
+            scatter.setData([], [])
         logger.debug("PlotWidget[%s]: switched back to live mode", self._device_id)
 
     def set_x_axis_mode(self, mode: str) -> None:
@@ -588,12 +691,14 @@ class PlotWidget(QWidget):
             self._render_log_channel(name)
         else:
             curve = self._curves.get(name)
-            if curve is None:
-                return
-            if visible:
-                self._update_curve(name)
-            else:
-                curve.setData([], [])
+            if curve is not None:
+                if visible:
+                    self._update_curve(name)
+                else:
+                    curve.setData([], [])
+            scatter = self._scatters.get(name)
+            if scatter is not None and not visible:
+                scatter.setData([], [])
         self._ensure_single_unit_group()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
@@ -609,12 +714,14 @@ class PlotWidget(QWidget):
         else:
             for ch_name, cfg in self._channels.items():
                 curve = self._curves.get(ch_name)
-                if curve is None:
-                    continue
-                if cfg.get("visible", True):
-                    self._update_curve(ch_name)
-                else:
-                    curve.setData([], [])
+                if curve is not None:
+                    if cfg.get("visible", True):
+                        self._update_curve(ch_name)
+                    else:
+                        curve.setData([], [])
+                scatter = self._scatters.get(ch_name)
+                if scatter is not None and not cfg.get("visible", True):
+                    scatter.setData([], [])
         self._ensure_single_unit_group()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
@@ -734,6 +841,8 @@ class PlotWidget(QWidget):
                         self._curves[ch].setPen(
                             pg.mkPen(color=new_colour, width=2)
                         )
+                    if ch in self._scatters:
+                        self._scatters[ch].setBrush(pg.mkBrush(new_colour))
 
             if self._log_mode:
                 # Re-render all channels so colour/visibility changes take effect
@@ -741,16 +850,16 @@ class PlotWidget(QWidget):
                     self._render_log_channel(name)
             else:
                 # Hide/show curves based on new visibility.
-                # Hidden curves get cleared from the screen but the buffer
-                # is preserved so re-enabling shows all historical data.
                 for name, cfg in self._channels.items():
                     curve = self._curves.get(name)
-                    if curve is None:
-                        continue
-                    if cfg.get("visible", True):
-                        self._update_curve(name)
-                    else:
-                        curve.setData([], [])
+                    if curve is not None:
+                        if cfg.get("visible", True):
+                            self._update_curve(name)
+                        else:
+                            curve.setData([], [])
+                    scatter = self._scatters.get(name)
+                    if scatter is not None and not cfg.get("visible", True):
+                        scatter.setData([], [])
             self._ensure_single_unit_group()
             self._update_y_label()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
@@ -771,6 +880,8 @@ class PlotWidget(QWidget):
             buf.clear()
         for curve in self._curves.values():
             curve.setData([], [])
+        for scatter in self._scatters.values():
+            scatter.setData([], [])
         self._clear_log_curves()
         self._log_data_cache.clear()
         # Restore channel_units for the new device if known
@@ -819,6 +930,13 @@ class PlotWidget(QWidget):
             autoDownsample=True,
         )
         self._curves[name] = curve
+        # Scatter for data-point markers (decimated, no connecting lines)
+        scatter = pg.ScatterPlotItem(
+            [], [], symbol="o", symbolSize=SCATTER_SYMBOL_SIZE,
+            brush=pg.mkBrush(colour), pen=None,
+        )
+        self._plot.addItem(scatter)
+        self._scatters[name] = scatter
 
     def _remove_channel(self, name: str) -> None:
         self._channels.pop(name, None)
@@ -826,9 +944,15 @@ class PlotWidget(QWidget):
         curve = self._curves.pop(name, None)
         if curve is not None:
             self._plot.removeItem(curve)
+        scatter = self._scatters.pop(name, None)
+        if scatter is not None:
+            self._plot.removeItem(scatter)
         # Clean up log-viewer curves for this channel as well
         for log_curve in self._log_curves.pop(name, []):
             self._plot.removeItem(log_curve)
+        log_scatter = self._log_scatters.pop(name, None)
+        if log_scatter is not None:
+            self._plot.removeItem(log_scatter)
 
     def _update_curve(self, channel_name: str) -> None:
         curve = self._curves.get(channel_name)
@@ -837,6 +961,9 @@ class PlotWidget(QWidget):
         buf = self._buffers.get(channel_name)
         if not buf:
             curve.setData([], [])
+            scatter = self._scatters.get(channel_name)
+            if scatter is not None:
+                scatter.setData([], [])
             return
         xs, ys = zip(*buf) if buf else ([], [])
         xs_list = list(xs)
@@ -854,6 +981,11 @@ class PlotWidget(QWidget):
                 i += 1
             i += 1
         curve.setData(xs_list, ys_list)
+        # Update viewport-decimated scatter markers
+        scatter = self._scatters.get(channel_name)
+        if scatter is not None:
+            dec_xs, dec_ys = self._decimate_viewport(xs_list, ys_list)
+            scatter.setData(dec_xs, dec_ys)
 
     def _trim_buffers(self) -> None:
         if self._history_seconds <= 0 or self._t0 is None:
@@ -955,6 +1087,9 @@ class PlotWidget(QWidget):
                                         self._update_curve(ch)
                                     else:
                                         curve.setData([], [])
+                                scatter = self._scatters.get(ch)
+                                if scatter is not None and not visible:
+                                    scatter.setData([], [])
         # Always sync the legend, even for single-unit-group devices
         # where visibility may have changed via apply_visibility / set_channel_visibility.
         self._update_legend()
@@ -1029,12 +1164,15 @@ class PlotWidget(QWidget):
 
         Reads the pre-built (xs, ys) from ``_log_data_cache``, splits
         at gaps >60 s, and adds one ``PlotDataItem`` per contiguous
-        segment.  Curves carry no legend entry (the live-curve legend
-        items serve for both modes).
+        segment.  Also adds a single decimated ``ScatterPlotItem``
+        showing data-point markers across all segments.
         """
-        # Remove any previous log curves for this channel
+        # Remove any previous log curves / scatter for this channel
         for curve in self._log_curves.pop(name, []):
             self._plot.removeItem(curve)
+        scatter = self._log_scatters.pop(name, None)
+        if scatter is not None:
+            self._plot.removeItem(scatter)
 
         xs, ys = self._log_data_cache.get(name, ([], []))
         if not xs:
@@ -1059,14 +1197,28 @@ class PlotWidget(QWidget):
                 curve.setData([], [])
             curves.append(curve)
 
+        # Single viewport-decimated scatter across all segments
+        dec_xs, dec_ys = self._decimate_viewport(xs, ys)
+        scatter = pg.ScatterPlotItem(
+            dec_xs, dec_ys, symbol="o", symbolSize=SCATTER_SYMBOL_SIZE,
+            brush=pg.mkBrush(colour), pen=None,
+        )
+        if not visible:
+            scatter.setData([], [])
+        self._plot.addItem(scatter)
+
         self._log_curves[name] = curves
+        self._log_scatters[name] = scatter
 
     def _clear_log_curves(self) -> None:
-        """Remove all log-viewer PlotDataItem segments from the plot."""
+        """Remove all log-viewer PlotDataItem segments and scatters from the plot."""
         for curves in self._log_curves.values():
             for curve in curves:
                 self._plot.removeItem(curve)
         self._log_curves.clear()
+        for scatter in self._log_scatters.values():
+            self._plot.removeItem(scatter)
+        self._log_scatters.clear()
 
     def _update_x_axis_label(self, mode: str) -> None:
         """Set the x-axis label and axis type based on the current mode.
