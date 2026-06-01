@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDateTimeEdit,
+    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -123,6 +124,13 @@ class MainWindow(QMainWindow):
         self._theme_action.setStatusTip("Toggle between dark and light theme")
         self._theme_action.triggered.connect(self._on_toggle_theme)
         view_menu.addAction(self._theme_action)
+
+        view_menu.addSeparator()
+
+        self._gap_action = QAction("&Gap Threshold…", self)
+        self._gap_action.setStatusTip("Set the gap-detection threshold for all plots")
+        self._gap_action.triggered.connect(self._on_gap_threshold_dialog)
+        view_menu.addAction(self._gap_action)
 
         view_menu.addSeparator()
 
@@ -261,6 +269,19 @@ class MainWindow(QMainWindow):
         self._history_spin.setMinimumWidth(80)
         row1_layout.addWidget(self._history_spin)
 
+        # Gap threshold spinner (applies to all plots)
+        gap_label = QLabel("  Gap:")
+        row1_layout.addWidget(gap_label)
+
+        self._gap_spin = QDoubleSpinBox()
+        self._gap_spin.setRange(0.1, 3600.0)
+        self._gap_spin.setValue(60.0)
+        self._gap_spin.setSingleStep(5.0)
+        self._gap_spin.setSuffix(" s")
+        self._gap_spin.setToolTip("Gap threshold — breaks the line when data points are farther apart")
+        self._gap_spin.setMinimumWidth(80)
+        row1_layout.addWidget(self._gap_spin)
+
         row1_layout.addStretch()
         container_layout.addWidget(row1)
 
@@ -337,6 +358,20 @@ class MainWindow(QMainWindow):
         container_layout.addWidget(row2)
 
         self._toolbar.addWidget(container)
+
+    def _on_gap_threshold_dialog(self) -> None:
+        """Open a dialog to set the gap threshold for all plots."""
+        from PySide6.QtWidgets import QInputDialog
+        current = self._gap_spin.value()
+        value, ok = QInputDialog.getDouble(
+            self,
+            "Gap Threshold",
+            "Break plot lines when data points are farther apart than (s):",
+            current,
+            0.1, 3600.0, 1,
+        )
+        if ok:
+            self._gap_spin.setValue(value)
 
     def set_log_controls_visible(self, visible: bool) -> None:
         """Show or hide the log-viewer controls in the toolbar."""
