@@ -777,11 +777,9 @@ class DeviceManager:
         self._sync_history(float(value))
 
     def _on_gap_threshold_changed(self, value: float) -> None:
-        """Toolbar gap threshold spinner changed — propagate to all plots and persist."""
-        # Persist to config
+        """Gap threshold changed (via View menu dialog) — propagate to all plots and persist."""
         self._config.setdefault("gui", {})["gap_threshold_seconds"] = value
         save_config(self._config)
-        # Propagate to all plots (both live and log-viewer use the threshold)
         for plot in self._plots.values():
             plot.set_gap_threshold(value)
 
@@ -893,9 +891,8 @@ class DeviceManager:
             w._history_spin.setValue(int(first_plot.history_seconds))
         w._history_spin.valueChanged.connect(self._on_history_changed)
 
-        # Gap threshold spinner — sync with config and propagate to all plots
-        w._gap_spin.setValue(get_gap_threshold(self._config))
-        w._gap_spin.valueChanged.connect(self._on_gap_threshold_changed)
+        # Gap threshold — wire the signal from the View menu dialog
+        w.gap_threshold_changed.connect(self._on_gap_threshold_changed)
 
         # ---- Log viewer controls ----
         w._mode_toggle.toggled.connect(lambda checked: self.set_view_mode(not checked))

@@ -40,7 +40,7 @@ TRACE_COLOURS = [
 ]
 
 _DEFAULT_GAP_THRESHOLD_S = 60.0
-MAX_SCATTER_PX_SPACING = 30  # target pixels between scatter markers
+MAX_SCATTER_PX_SPACING = 20  # target pixels between scatter markers
 SCATTER_SYMBOL_SIZE = 2    # dot radius in pixels
 
 
@@ -261,11 +261,20 @@ class PlotWidget(QWidget):
         if not vis_x:
             return [], []
 
-        # One marker every ~px_spacing pixels
+        # One marker every ~px_spacing pixels — but based on the data's
+        # actual pixel span within the view, not the full viewport width.
+        # This prevents markers from piling up when data is clustered
+        # in a small portion of a wide zoomed-out view.
         px_width = vb.width()
         if px_width <= 0:
             px_width = 800
-        max_points = max(20, int(px_width / MAX_SCATTER_PX_SPACING))
+        view_x_span = x_max - x_min
+        data_x_span = vis_x[-1] - vis_x[0]
+        if view_x_span > 0 and data_x_span > 0:
+            data_px_width = px_width * (data_x_span / view_x_span)
+        else:
+            data_px_width = px_width
+        max_points = max(5, int(data_px_width / MAX_SCATTER_PX_SPACING))
 
         n = len(vis_x)
         if n <= max_points:

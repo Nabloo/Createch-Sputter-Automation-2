@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDateTimeEdit,
-    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -51,6 +50,9 @@ class MainWindow(QMainWindow):
     # Thread-safe signal for error display.  Emitting from any thread
     # will invoke ``show_error`` on the GUI thread automatically.
     error_occurred = Signal(str)
+
+    # Emitted when the user changes the gap threshold via View → Gap Threshold…
+    gap_threshold_changed = Signal(float)
 
     def __init__(self, app: QApplication) -> None:
         super().__init__()
@@ -269,19 +271,6 @@ class MainWindow(QMainWindow):
         self._history_spin.setMinimumWidth(80)
         row1_layout.addWidget(self._history_spin)
 
-        # Gap threshold spinner (applies to all plots)
-        gap_label = QLabel("  Gap:")
-        row1_layout.addWidget(gap_label)
-
-        self._gap_spin = QDoubleSpinBox()
-        self._gap_spin.setRange(0.1, 3600.0)
-        self._gap_spin.setValue(60.0)
-        self._gap_spin.setSingleStep(5.0)
-        self._gap_spin.setSuffix(" s")
-        self._gap_spin.setToolTip("Gap threshold — breaks the line when data points are farther apart")
-        self._gap_spin.setMinimumWidth(80)
-        row1_layout.addWidget(self._gap_spin)
-
         row1_layout.addStretch()
         container_layout.addWidget(row1)
 
@@ -362,7 +351,8 @@ class MainWindow(QMainWindow):
     def _on_gap_threshold_dialog(self) -> None:
         """Open a dialog to set the gap threshold for all plots."""
         from PySide6.QtWidgets import QInputDialog
-        current = self._gap_spin.value()
+        config = getattr(self, '_config', {})
+        current = config.get("gui", {}).get("gap_threshold_seconds", 60.0)
         value, ok = QInputDialog.getDouble(
             self,
             "Gap Threshold",
@@ -371,7 +361,7 @@ class MainWindow(QMainWindow):
             0.1, 3600.0, 1,
         )
         if ok:
-            self._gap_spin.setValue(value)
+            self.gap_threshold_changed.emit(value)
 
     def set_log_controls_visible(self, visible: bool) -> None:
         """Show or hide the log-viewer controls in the toolbar."""
