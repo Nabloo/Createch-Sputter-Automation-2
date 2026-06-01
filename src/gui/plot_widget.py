@@ -141,6 +141,7 @@ class PlotWidget(QWidget):
         self._log_curves: Dict[str, List[pg.PlotDataItem]] = {}
         self._x_axis_mode: str = "relative"  # "relative" | "absolute"
         self._y_log: bool = False  # y-axis log scale
+        self._show_scatters: bool = True  # show/hide data-point markers
         # channel_name → ScatterPlotItem (decimated data-point markers)
         self._scatters: Dict[str, pg.ScatterPlotItem] = {}
         # channel_name → single ScatterPlotItem for log-viewer (decimated across all segments)
@@ -197,6 +198,12 @@ class PlotWidget(QWidget):
         self._log_btn.setToolTip("Toggle y-axis logarithmic scale")
         self._log_btn.toggled.connect(self._on_toggle_y_log)
         toolbar.addWidget(self._log_btn)
+
+        self._dots_btn = QCheckBox("Show Datapoints")
+        self._dots_btn.setChecked(True)
+        self._dots_btn.setToolTip("Show/hide data-point markers. If too many are shown, they get reduced.")
+        self._dots_btn.toggled.connect(self._on_toggle_show_scatters)
+        toolbar.addWidget(self._dots_btn)
 
         toolbar.addStretch()
 
@@ -325,6 +332,15 @@ class PlotWidget(QWidget):
             Refresh only this channel.  ``None`` refreshes every configured
             channel (both visible and hidden — hidden ones are cleared).
         """
+        if not self._show_scatters:
+            # Dots hidden globally — clear all scatter data
+            if self._log_mode:
+                for scatter in self._log_scatters.values():
+                    scatter.setData([], [])
+            else:
+                for scatter in self._scatters.values():
+                    scatter.setData([], [])
+            return
         channels = [channel_name] if channel_name else list(self._channels.keys())
 
         if self._log_mode:
@@ -850,6 +866,23 @@ class PlotWidget(QWidget):
         """Toggle the y-axis log scale."""
         self.set_y_log(checked)
         self.state_changed.emit()
+
+    def _on_toggle_show_scatters(self, checked: bool) -> None:
+        """Toggle scatter-point visibility."""
+        self.set_show_scatters(checked)
+        self.state_changed.emit()
+
+    @property
+    def show_scatters(self) -> bool:
+        return self._show_scatters
+
+    def set_show_scatters(self, show: bool) -> None:
+        """Show or hide data-point markers (programmatic)."""
+        self._show_scatters = show
+        self._dots_btn.blockSignals(True)
+        self._dots_btn.setChecked(show)
+        self._dots_btn.blockSignals(False)
+        self._refresh_scatters()
 
     def set_dark_mode(self, dark: bool) -> None:
         """Update plot styling to match the application theme."""
