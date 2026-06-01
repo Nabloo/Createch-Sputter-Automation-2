@@ -39,7 +39,7 @@ TRACE_COLOURS = [
     "#748ffc", "#94d82d", "#ff8787", "#4dabf7",
 ]
 
-_GAP_THRESHOLD_S = 60.0
+_DEFAULT_GAP_THRESHOLD_S = 60.0
 
 
 def _channel_legend_name(channel: str) -> str:
@@ -61,7 +61,7 @@ def _channel_legend_name(channel: str) -> str:
 def _split_into_segments(
     xs: List[float],
     ys: List[float],
-    gap_threshold_s: float = _GAP_THRESHOLD_S,
+    gap_threshold_s: float = _DEFAULT_GAP_THRESHOLD_S,
 ) -> List[Tuple[List[float], List[float]]]:
     """Split (x, y) series at gaps larger than *gap_threshold_s*.
 
@@ -105,12 +105,14 @@ class PlotWidget(QWidget):
         self,
         device_id: str = "",
         history_seconds: float = 0,
+        gap_threshold_s: float = _DEFAULT_GAP_THRESHOLD_S,
         global_t0: Optional[List[Optional[float]]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._device_id = device_id
         self._history_seconds = history_seconds
+        self._gap_threshold_s = gap_threshold_s
         # Shared mutable t0 container — when this plot first sees data,
         # it writes the timestamp here so other plots can stay in sync.
         self._shared_t0: Optional[List[Optional[float]]] = global_t0
@@ -524,6 +526,17 @@ class PlotWidget(QWidget):
         if t0 is not None and t0[0] is not None and self._t0 is None:
             self._t0 = t0[0]
 
+    def set_gap_threshold(self, gap_threshold_s: float) -> None:
+        """Update the gap-detection threshold and re-render all curves."""
+        self._gap_threshold_s = max(0.0, gap_threshold_s)
+        if self._log_mode:
+            # Re-render all log-viewer channels with the new threshold
+            for name in self._channels:
+                self._render_log_channel(name)
+        else:
+            for name in self.visible_channels:
+                self._update_curve(name)
+
     def set_y_log(self, enabled: bool) -> None:
         """Enable or disable logarithmic y-axis scale."""
         self._y_log = enabled
@@ -826,10 +839,21 @@ class PlotWidget(QWidget):
             curve.setData([], [])
             return
         xs, ys = zip(*buf) if buf else ([], [])
+        xs_list = list(xs)
+        ys_list = list(ys)
         # In live mode with absolute x-axis, convert relative → absolute
         if self._x_axis_mode == "absolute" and self._t0 is not None:
-            xs = [x + self._t0 for x in xs]
-        curve.setData(list(xs), list(ys))
+            xs_list = [x + self._t0 for x in xs_list]
+        # Insert NaN at gaps > threshold to create visual line breaks
+        gap_s = self._gap_threshold_s
+        i = 1
+        while i < len(xs_list):
+            if xs_list[i] - xs_list[i - 1] > gap_s:
+                xs_list.insert(i, xs_list[i - 1])
+                ys_list.insert(i, float("nan"))
+                i += 1
+            i += 1
+        curve.setData(xs_list, ys_list)
 
     def _trim_buffers(self) -> None:
         if self._history_seconds <= 0 or self._t0 is None:
@@ -1020,7 +1044,7 @@ class PlotWidget(QWidget):
         colour = cfg.get("colour", "#ffffff")
         visible = cfg.get("visible", True)
 
-        segments = _split_into_segments(xs, ys)
+        segments = _split_into_segments(xs, ys, self._gap_threshold_s)
         curves: List[pg.PlotDataItem] = []
         for i, (seg_x, seg_y) in enumerate(segments):
             if not seg_x:

@@ -28,7 +28,7 @@ except ImportError:
     list_ports = None  # type: ignore[assignment]
 
 from src.acquisition.engine import AcquisitionEngine
-from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config, save_config, set_plot_configs
+from src.config import get_device_configs, get_plot_configs, get_device_panel_configs, find_device_config, get_gap_threshold, save_config, set_plot_configs
 from src.data.datastore import DataStore
 from src.data_logging.data_logger import DataLogger
 from src.data_logging.log_reader import LogData, LogFileReader
@@ -550,9 +550,11 @@ class DeviceManager:
                 colour_map[ch] = col
             merged_colours = [colour_map[ch] for ch in all_channels if ch in colour_map]
 
+            gap_threshold = get_gap_threshold(self._config)
             plot = PlotWidget(
                 device_id=device_id,
                 history_seconds=history,
+                gap_threshold_s=gap_threshold,
                 global_t0=self._global_t0,
             )
             plot.set_available_devices(device_ids)
@@ -580,7 +582,7 @@ class DeviceManager:
                 lambda new_did, did=dock_id: self._on_plot_device_changed(did, new_did)
             )
 
-            self._window.dock_manager.add_panel(dock_id, "", plot, area=area, allowed_areas=allowedAreas)
+            self._window.dock_manager.add_panel(dock_id, device_id, plot, area=area, allowed_areas=allowedAreas)
             self._store.subscribe(plot.push_data)
             self._plots[dock_id] = plot
             logger.debug("PlotWidget created for %s (dock %s)", device_id, dock_id)
@@ -622,9 +624,11 @@ class DeviceManager:
 
         dock_id = f"plot_{last_plot_id+1}"
 
+        gap_threshold = get_gap_threshold(self._config)
         plot = PlotWidget(
             device_id=default_device,
             history_seconds=shared_history,
+            gap_threshold_s=gap_threshold,
             global_t0=self._global_t0,
         )
         plot.set_available_devices(device_ids)
@@ -633,7 +637,7 @@ class DeviceManager:
 
         self._window.dock_manager.add_panel(
             panel_id=dock_id,
-            title="",
+            title=default_device,
             widget=plot,
             area=Qt.RightDockWidgetArea,
             allowed_areas=Qt.RightDockWidgetArea,
@@ -723,6 +727,11 @@ class DeviceManager:
             if any(history.values()):
                 plot.load_history(history)
 
+        # Update the dock title to reflect the new device
+        dock = self._window.dock_manager.panel(dock_id)
+        if dock is not None:
+            dock.setWindowTitle(new_device_id)
+
         # Update the y-axis label to match the new device's units.
         # set_channels already enforces single-unit-group visibility.
         plot._update_y_label()
@@ -766,6 +775,15 @@ class DeviceManager:
     def _on_history_changed(self, value: int) -> None:
         """Toolbar history spinner changed — propagate to all plots."""
         self._sync_history(float(value))
+
+    def _on_gap_threshold_changed(self, value: float) -> None:
+        """Toolbar gap threshold spinner changed — propagate to all plots and persist."""
+        # Persist to config
+        self._config.setdefault("gui", {})["gap_threshold_seconds"] = value
+        save_config(self._config)
+        # Propagate to all plots (both live and log-viewer use the threshold)
+        for plot in self._plots.values():
+            plot.set_gap_threshold(value)
 
     def _persist_plots(self) -> None:
         """Save all current plot configurations to config.json.
@@ -874,6 +892,10 @@ class DeviceManager:
         if first_plot is not None:
             w._history_spin.setValue(int(first_plot.history_seconds))
         w._history_spin.valueChanged.connect(self._on_history_changed)
+
+        # Gap threshold spinner — sync with config and propagate to all plots
+        w._gap_spin.setValue(get_gap_threshold(self._config))
+        w._gap_spin.valueChanged.connect(self._on_gap_threshold_changed)
 
         # ---- Log viewer controls ----
         w._mode_toggle.toggled.connect(lambda checked: self.set_view_mode(not checked))

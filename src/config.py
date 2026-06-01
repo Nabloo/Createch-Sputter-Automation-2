@@ -55,6 +55,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
   },
   "gui": {
     "theme": "dark",
+    "gap_threshold_seconds": 60.0,
     "window": {
       "width": 1424,
       "height": 813,
@@ -264,6 +265,16 @@ def upsert_plot_config(
 # ------------------------------------------------------------------
 # Device panel persistence
 # ------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------
+# Gap threshold
+# ------------------------------------------------------------------
+
+
+def get_gap_threshold(config: Dict[str, Any]) -> float:
+    """Return the plot gap-detection threshold in seconds."""
+    return float(config.get("gui", {}).get("gap_threshold_seconds", 60.0))
 
 
 def get_device_panel_configs(config: Dict[str, Any]) -> List[Dict[str, Any]]:

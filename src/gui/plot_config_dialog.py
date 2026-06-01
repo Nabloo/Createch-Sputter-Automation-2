@@ -249,28 +249,24 @@ class PlotConfigDialog(QDialog):
             cb.blockSignals(False)
 
     def _on_channel_toggled(self, channel: str, checked: bool) -> None:
-        """When a channel is checked, switch to its unit group.
+        """When a channel is toggled, only toggle the clicked channel.
 
-        All channels in the same unit group become checked, and all
-        channels in different unit groups become unchecked.
+        If the clicked channel belongs to a different unit group than
+        any currently-checked channels, those other-group channels are
+        unchecked to prevent mixing units.  Same-group channels are
+        left as-is.
         """
         if not checked:
             return  # unchecking a single channel is always allowed
 
-        # Find the unit group of the toggled channel
+        # Only uncheck channels from *other* unit groups — don't
+        # auto-check all same-group channels.
         target_unit = self._channel_units.get(channel, "")
-        target_channels = self._unit_groups.get(target_unit, [channel])
-
-        # Check all channels in the target group, uncheck all others
         for ch, cb in self._checkboxes.items():
             if ch == channel:
-                continue  # already handling this one
-            if ch in target_channels:
-                # Will be checked — block signals to avoid recursion
-                cb.blockSignals(True)
-                cb.setChecked(True)
-                cb.blockSignals(False)
-            else:
+                continue
+            unit = self._channel_units.get(ch, "")
+            if unit != target_unit and cb.isChecked():
                 cb.blockSignals(True)
                 cb.setChecked(False)
                 cb.blockSignals(False)
