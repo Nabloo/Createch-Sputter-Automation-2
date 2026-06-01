@@ -908,7 +908,7 @@ class PlotWidget(QWidget):
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
 
-    def apply_channel_visibility(self, visibility: Dict[str, bool]) -> None:
+    def apply_visibility(self, visibility: Dict[str, bool]) -> None:
         """Apply a visibility map to all channels (used when restoring from config)."""
         for ch_name, vis in visibility.items():
             if ch_name in self._channels:

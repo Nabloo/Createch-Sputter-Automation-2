@@ -84,7 +84,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
           "ch3_pressure": True
         },
         "history_seconds": 0.0,
-        "y_log": False
+        "y_log": False,
+        "show_scatters": True
       }
     ],
     "device_panels": [
