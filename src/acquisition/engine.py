@@ -231,21 +231,17 @@ class AcquisitionEngine:
             except (ConnectionError, TimeoutError, OSError) as exc:
                 logger.debug("%s poll error: %s", device_id, exc)
                 self._report_error(device_id, f"Poll error: {exc}")
-                # Sleep in small steps so we can react to stop quickly
-                deadline = time.monotonic() + poll_interval
-                while time.monotonic() < deadline:
-                    if not self._polling_active.get(device_id, False):
-                        break
-                    time.sleep(min(0.1, deadline - time.monotonic()))
             except Exception:
                 logger.exception("%s unexpected poll error", device_id)
                 self._report_error(device_id, f"Unexpected poll error")
-                # Sleep in small steps so we can react to stop quickly
-                deadline = time.monotonic() + poll_interval
-                while time.monotonic() < deadline:
-                    if not self._polling_active.get(device_id, False):
-                        break
-                    time.sleep(min(0.1, deadline - time.monotonic()))
+
+            # Sleep for the remainder of the poll interval, checking for stop
+            # in small steps so we can react quickly.
+            deadline = time.monotonic() + poll_interval
+            while time.monotonic() < deadline:
+                if not self._polling_active.get(device_id, False):
+                    break
+                time.sleep(min(0.1, deadline - time.monotonic()))
 
     def _report_error(self, device_id: str, message: str) -> None:
         """Invoke the error callback, if set.
