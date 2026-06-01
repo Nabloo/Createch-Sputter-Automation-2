@@ -315,21 +315,54 @@ class PlotWidget(QWidget):
             idx += stride
         return result_x, result_y
 
-    def _on_view_range_changed(self) -> None:
-        """Re-decimate scatter markers after zoom/pan."""
+    def _refresh_scatters(self, channel_name: Optional[str] = None) -> None:
+        """Refresh decimated scatter markers — the single entry-point for all
+        scatter updates (zoom/pan, new data, visibility toggles, y-log, etc.).
+
+        Parameters
+        ----------
+        channel_name:
+            Refresh only this channel.  ``None`` refreshes every configured
+            channel (both visible and hidden — hidden ones are cleared).
+        """
+        channels = [channel_name] if channel_name else list(self._channels.keys())
+
         if self._log_mode:
-            for name in self._channels:
+            for name in channels:
+                if name not in self._channels:
+                    continue
+                visible = self._channels[name].get("visible", True)
                 scatter = self._log_scatters.get(name)
                 if scatter is None:
                     continue
+                if not visible:
+                    scatter.setData([], [])
+                    continue
                 xs, ys = self._log_data_cache.get(name, ([], []))
-                if xs:
-                    dec_xs, dec_ys = self._decimate_viewport(xs, ys)
-                    scatter.setData(dec_xs, dec_ys)
+                if not xs:
+                    scatter.setData([], [])
+                    continue
+                # Log scale cannot display y ≤ 0 — filter before decimation
+                if self._y_log:
+                    filtered = [(x, y) for x, y in zip(xs, ys) if y > 0]
+                    if filtered:
+                        f_xs, f_ys = zip(*filtered)
+                        xs, ys = list(f_xs), list(f_ys)
+                    else:
+                        scatter.setData([], [])
+                        continue
+                dec_xs, dec_ys = self._decimate_viewport(xs, ys)
+                scatter.setData(dec_xs, dec_ys)
         else:
-            for name in self.visible_channels:
+            for name in channels:
+                if name not in self._channels:
+                    continue
+                visible = self._channels[name].get("visible", True)
                 scatter = self._scatters.get(name)
                 if scatter is None:
+                    continue
+                if not visible:
+                    scatter.setData([], [])
                     continue
                 buf = self._buffers.get(name)
                 if not buf:
@@ -339,8 +372,55 @@ class PlotWidget(QWidget):
                 ys_list = [p[1] for p in buf]
                 if self._x_axis_mode == "absolute" and self._t0 is not None:
                     xs_list = [x + self._t0 for x in xs_list]
+                # Log scale cannot display y ≤ 0 — filter before decimation
+                if self._y_log:
+                    filtered = [(x, y) for x, y in zip(xs_list, ys_list) if y > 0]
+                    if filtered:
+                        f_xs, f_ys = zip(*filtered)
+                        xs_list, ys_list = list(f_xs), list(f_ys)
+                    else:
+                        scatter.setData([], [])
+                        continue
                 dec_xs, dec_ys = self._decimate_viewport(xs_list, ys_list)
                 scatter.setData(dec_xs, dec_ys)
+
+    def _refresh_curves(self, channel_name: Optional[str] = None) -> None:
+        """Refresh curve data — the single entry-point for all curve updates.
+
+        Handles both live-mode (``_update_curve_data``) and log-viewer mode
+        (``_render_log_channel``).  Visible channels get their curves refreshed
+        from buffers / cache; hidden channels get cleared.
+
+        Parameters
+        ----------
+        channel_name:
+            Refresh only this channel.  ``None`` refreshes every configured
+            channel.
+        """
+        channels = [channel_name] if channel_name else list(self._channels.keys())
+
+        if self._log_mode:
+            for name in channels:
+                if name in self._channels:
+                    self._render_log_channel(name)
+        else:
+            for name in channels:
+                if name not in self._channels:
+                    continue
+                cfg = self._channels[name]
+                visible = cfg.get("visible", True)
+                curve = self._curves.get(name)
+                if curve is None:
+                    continue
+                if visible:
+                    self._update_curve_data(name)
+                else:
+                    curve.setData([], [])
+                    self._refresh_scatters(name)
+
+    def _on_view_range_changed(self) -> None:
+        """Re-decimate scatter markers after zoom/pan."""
+        self._refresh_scatters()
 
     def _on_mouse_moved(self, evt) -> None:
         """Track mouse and show a tooltip above the nearest data point.
@@ -507,7 +587,7 @@ class PlotWidget(QWidget):
                 self._buffers[channel_name].append((ts_float, value))
             # Only render visible channels; hidden ones stay in buffer only.
             if self._channels.get(channel_name, {}).get("visible", True):
-                self._update_curve(channel_name)
+                self._refresh_curves(channel_name)
         self._trim_buffers()
 
     def clear(self) -> None:
@@ -515,10 +595,10 @@ class PlotWidget(QWidget):
         self._y_label_set = False
         for buf in self._buffers.values():
             buf.clear()
-        for curve in self._curves.values():
-            curve.setData([], [])
+        self._refresh_curves()
         for scatter in self._scatters.values():
-            scatter.setData([], [])
+            self._plot.removeItem(scatter)
+        self._scatters.clear()
         self._cached_xs.clear()
         self._cached_ys.clear()
         self._clear_log_curves()
@@ -529,9 +609,7 @@ class PlotWidget(QWidget):
         """Set the rolling history window in seconds."""
         self._history_seconds = seconds
         self._trim_buffers()
-        for name, cfg in self._channels.items():
-            if cfg.get("visible", True):
-                self._update_curve(name)
+        self._refresh_curves()
 
     def backfill_from_store(self, store, device_id: str) -> None:
         """Clear buffers and reload all history from DataStore.
@@ -594,8 +672,7 @@ class PlotWidget(QWidget):
         self._cached_xs.clear()
         self._cached_ys.clear()
         # Clear live curves from the screen
-        for curve in self._curves.values():
-            curve.setData([], [])
+        self._refresh_curves()
         for buf in self._buffers.values():
             buf.clear()
 
@@ -661,8 +738,7 @@ class PlotWidget(QWidget):
         self._cached_xs.clear()
         self._cached_ys.clear()
         # Clear any rendered data from the screen
-        for curve in self._curves.values():
-            curve.setData([], [])
+        self._refresh_curves()
         for scatter in self._scatters.values():
             scatter.setData([], [])
         logger.debug("PlotWidget[%s]: switched back to live mode", self._device_id)
@@ -705,9 +781,7 @@ class PlotWidget(QWidget):
             self._set_relative_axis(axis_pen)
 
         if not self._log_mode:
-            for name, cfg in self._channels.items():
-                if cfg.get("visible", True):
-                    self._update_curve(name)
+            self._refresh_curves()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
     # ------------------------------------------------------------------
@@ -751,13 +825,7 @@ class PlotWidget(QWidget):
     def set_gap_threshold(self, gap_threshold_s: float) -> None:
         """Update the gap-detection threshold and re-render all curves."""
         self._gap_threshold_s = max(0.0, gap_threshold_s)
-        if self._log_mode:
-            # Re-render all log-viewer channels with the new threshold
-            for name in self._channels:
-                self._render_log_channel(name)
-        else:
-            for name in self.visible_channels:
-                self._update_curve(name)
+        self._refresh_curves()
 
     def set_y_log(self, enabled: bool) -> None:
         """Enable or disable logarithmic y-axis scale."""
@@ -769,6 +837,8 @@ class PlotWidget(QWidget):
         self._log_btn.setToolTip(
             "Y-axis is logarithmic" if enabled else "Y-axis is linear"
         )
+        # Re-decimate scatters: log scale filters out y ≤ 0 points
+        self._refresh_scatters()
         if enabled:
             # Auto-range with log scale — must re-enable to recalculate
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
@@ -806,18 +876,7 @@ class PlotWidget(QWidget):
         if cfg is None:
             return
         cfg["visible"] = visible
-        if self._log_mode:
-            self._render_log_channel(name)
-        else:
-            curve = self._curves.get(name)
-            if curve is not None:
-                if visible:
-                    self._update_curve(name)
-                else:
-                    curve.setData([], [])
-            scatter = self._scatters.get(name)
-            if scatter is not None and not visible:
-                scatter.setData([], [])
+        self._refresh_curves(name)
         self._ensure_single_unit_group()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
@@ -827,20 +886,7 @@ class PlotWidget(QWidget):
         for ch_name, vis in visibility.items():
             if ch_name in self._channels:
                 self._channels[ch_name]["visible"] = vis
-        if self._log_mode:
-            for ch_name in self._channels:
-                self._render_log_channel(ch_name)
-        else:
-            for ch_name, cfg in self._channels.items():
-                curve = self._curves.get(ch_name)
-                if curve is not None:
-                    if cfg.get("visible", True):
-                        self._update_curve(ch_name)
-                    else:
-                        curve.setData([], [])
-                scatter = self._scatters.get(ch_name)
-                if scatter is not None and not cfg.get("visible", True):
-                    scatter.setData([], [])
+        self._refresh_curves()
         self._ensure_single_unit_group()
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
 
@@ -928,10 +974,7 @@ class PlotWidget(QWidget):
             self._buffers[channel_name].append((t_rel, value))
 
         self._trim_buffers()
-        # Only update the rendered curve for visible channels.
-        for channel_name, cfg in self._channels.items():
-            if cfg.get("visible", True):
-                self._update_curve(channel_name)
+        self._refresh_curves()
 
     def _on_configure(self) -> None:
         """Open the channel configuration dialog."""
@@ -963,22 +1006,7 @@ class PlotWidget(QWidget):
                     if ch in self._scatters:
                         self._scatters[ch].setBrush(pg.mkBrush(new_colour))
 
-            if self._log_mode:
-                # Re-render all channels so colour/visibility changes take effect
-                for name in self._channels:
-                    self._render_log_channel(name)
-            else:
-                # Hide/show curves based on new visibility.
-                for name, cfg in self._channels.items():
-                    curve = self._curves.get(name)
-                    if curve is not None:
-                        if cfg.get("visible", True):
-                            self._update_curve(name)
-                        else:
-                            curve.setData([], [])
-                    scatter = self._scatters.get(name)
-                    if scatter is not None and not cfg.get("visible", True):
-                        scatter.setData([], [])
+            self._refresh_curves()
             self._ensure_single_unit_group()
             self._update_y_label()
             self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
@@ -997,10 +1025,13 @@ class PlotWidget(QWidget):
         self._y_label_set = False
         for buf in self._buffers.values():
             buf.clear()
-        for curve in self._curves.values():
-            curve.setData([], [])
+        self._refresh_curves()
+        # Remove all scatter items from the plot entirely (not just
+        # clear their data) so no dots from the old device can survive
+        # a view-range change or channel-name overlap.
         for scatter in self._scatters.values():
-            scatter.setData([], [])
+            self._plot.removeItem(scatter)
+        self._scatters.clear()
         self._cached_xs.clear()
         self._cached_ys.clear()
         self._clear_log_curves()
@@ -1077,16 +1108,14 @@ class PlotWidget(QWidget):
         if log_scatter is not None:
             self._plot.removeItem(log_scatter)
 
-    def _update_curve(self, channel_name: str) -> None:
+    def _update_curve_data(self, channel_name: str) -> None:
         curve = self._curves.get(channel_name)
         if curve is None:
             return
         buf = self._buffers.get(channel_name)
         if not buf:
             curve.setData([], [])
-            scatter = self._scatters.get(channel_name)
-            if scatter is not None:
-                scatter.setData([], [])
+            self._refresh_scatters(channel_name)
             return
         xs, ys = zip(*buf) if buf else ([], [])
         xs_list = list(xs)
@@ -1110,10 +1139,7 @@ class PlotWidget(QWidget):
             i += 1
         curve.setData(xs_list, ys_list)
         # Update viewport-decimated scatter markers
-        scatter = self._scatters.get(channel_name)
-        if scatter is not None:
-            dec_xs, dec_ys = self._decimate_viewport(xs_list, ys_list)
-            scatter.setData(dec_xs, dec_ys)
+        self._refresh_scatters(channel_name)
 
     def _trim_buffers(self) -> None:
         if self._history_seconds <= 0 or self._t0 is None:
@@ -1209,15 +1235,8 @@ class PlotWidget(QWidget):
                             cfg = self._channels.get(ch)
                             if cfg and cfg.get("visible", True) != visible:
                                 cfg["visible"] = visible
-                                curve = self._curves.get(ch)
-                                if curve is not None:
-                                    if visible:
-                                        self._update_curve(ch)
-                                    else:
-                                        curve.setData([], [])
-                                scatter = self._scatters.get(ch)
-                                if scatter is not None and not visible:
-                                    scatter.setData([], [])
+                                self._refresh_curves(ch)
+        self._refresh_scatters()
         # Always sync the legend, even for single-unit-group devices
         # where visibility may have changed via apply_visibility / set_channel_visibility.
         self._update_legend()
@@ -1325,18 +1344,16 @@ class PlotWidget(QWidget):
                 curve.setData([], [])
             curves.append(curve)
 
-        # Single viewport-decimated scatter across all segments
-        dec_xs, dec_ys = self._decimate_viewport(xs, ys)
+        self._log_curves[name] = curves
+        # Create scatter, then delegate to _refresh_scatters for decimation
+        # (so y-log filtering is applied consistently).
         scatter = pg.ScatterPlotItem(
-            dec_xs, dec_ys, symbol="o", symbolSize=SCATTER_SYMBOL_SIZE,
+            [], [], symbol="o", symbolSize=SCATTER_SYMBOL_SIZE,
             brush=pg.mkBrush(colour), pen=None,
         )
-        if not visible:
-            scatter.setData([], [])
         self._plot.addItem(scatter)
-
-        self._log_curves[name] = curves
         self._log_scatters[name] = scatter
+        self._refresh_scatters(name)
 
     def _clear_log_curves(self) -> None:
         """Remove all log-viewer PlotDataItem segments and scatters from the plot."""
