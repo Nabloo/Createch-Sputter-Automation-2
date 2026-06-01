@@ -262,31 +262,17 @@ class TestPoll(unittest.TestCase):
         self.assertTrue(math.isnan(data["ch1_thickness"]))
         self.assertTrue(math.isnan(data["ch1_frequency"]))
 
-    def test_poll_returns_cached_data_on_transient_failure(self):
-        """Transient error returns last successful data instead of raising."""
-        # First: a successful poll populates the cache
-        payload = "A00.00 1.0 10.0 100.0 2.0 20.0 200.0"
-        with patch.object(self.ctrl, "_sqm_send", return_value=payload):
-            first = self.ctrl.poll()
-        self.assertAlmostEqual(first["ch1_rate"], 1.0)
-
-        # Second: _sqm_send raises SQMProtocolError → cached data returned
+    def test_poll_propagates_protocol_error(self):
+        """Protocol errors propagate to the caller (no caching)."""
         with patch.object(self.ctrl, "_sqm_send", side_effect=SQMProtocolError("status C")):
-            second = self.ctrl.poll()
-        self.assertEqual(first, second)
-        self.assertAlmostEqual(second["ch1_rate"], 1.0)
+            with self.assertRaises(SQMProtocolError):
+                self.ctrl.poll()
 
-    def test_poll_returns_cached_data_on_timeout_failure(self):
-        """Timeout error returns last successful data."""
-        # Populate cache with a successful poll first
-        payload = "A00.00 5.0 50.0 500.0 6.0 60.0 600.0"
-        with patch.object(self.ctrl, "_sqm_send", return_value=payload):
-            first = self.ctrl.poll()
-
+    def test_poll_propagates_timeout_error(self):
+        """Timeout errors propagate to the caller (no caching)."""
         with patch.object(self.ctrl, "_sqm_send", side_effect=TimeoutError("timeout")):
-            second = self.ctrl.poll()
-        self.assertEqual(first, second)
-        self.assertAlmostEqual(second["ch2_thickness"], 60.0)
+            with self.assertRaises(TimeoutError):
+                self.ctrl.poll()
 
     def test_poll_includes_units_from_config(self):
         """When units are configured in the device config, poll data includes them."""
@@ -303,18 +289,15 @@ class TestPoll(unittest.TestCase):
         # Values still present
         self.assertAlmostEqual(data["ch1_rate"], 7.10)
 
-    def test_poll_cache_includes_units(self):
-        """Cached data retains unit keys from the last successful poll."""
+    def test_poll_units_from_config(self):
+        """Poll data includes unit keys from config."""
         ctrl = SQMController(_make_config(
             number_of_sensors=1,
             units={"rate": "\u00c5/s", "thickness": "k\u00c5", "frequency": "Hz"}
         ))
         payload = "A00.00 1.0 10.0 100.0"
         with patch.object(ctrl, "_sqm_send", return_value=payload):
-            first = ctrl.poll()
-
-        with patch.object(ctrl, "_sqm_send", side_effect=SQMProtocolError("status C")):
-            cached = ctrl.poll()
-        self.assertEqual(cached["ch1_rate_unit"], "\u00c5/s")
-        self.assertEqual(cached["ch1_thickness_unit"], "k\u00c5")
-        self.assertEqual(cached["ch1_frequency_unit"], "Hz")
+            data = ctrl.poll()
+        self.assertEqual(data["ch1_rate_unit"], "\u00c5/s")
+        self.assertEqual(data["ch1_thickness_unit"], "k\u00c5")
+        self.assertEqual(data["ch1_frequency_unit"], "Hz")

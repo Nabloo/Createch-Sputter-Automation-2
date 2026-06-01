@@ -37,16 +37,6 @@ class SQMController(BaseDevice):
             self._channels.append(f"ch{n}_rate")
             self._channels.append(f"ch{n}_thickness")
             self._channels.append(f"ch{n}_frequency")
-        # Cache of last successful poll data — returned on transient failures
-        # so the GUI keeps showing the last known values.
-        self._last_poll_data: Dict[str, Any] = {}
-        for n in range(1, self._num_sensors + 1):
-            self._last_poll_data[f"ch{n}_rate"] = float("nan")
-            self._last_poll_data[f"ch{n}_thickness"] = float("nan")
-            self._last_poll_data[f"ch{n}_frequency"] = float("nan")
-            self._last_poll_data[f"ch{n}_rate_unit"] = self._units.get("rate", "")
-            self._last_poll_data[f"ch{n}_thickness_unit"] = self._units.get("thickness", "")
-            self._last_poll_data[f"ch{n}_frequency_unit"] = self._units.get("frequency", "")
 
     @property
     def device_id(self) -> str:
@@ -155,16 +145,9 @@ class SQMController(BaseDevice):
     def poll(self) -> Dict[str, Any]:
         """Poll all sensors via the W command.
 
-        Returns cached data from the last successful poll on transient
-        failures (e.g. intermittent status-C responses), so the GUI
-        keeps showing the last known values.
+        Lets errors propagate to the engine (same behaviour as VCU).
         """
-        try:
-            resp = self._sqm_send("W")
-        except (SQMProtocolError, TimeoutError, ConnectionError, OSError, serial.SerialException) as exc:
-            logger.debug("%s poll transient failure — %s; using cached values", self.device_id, exc)
-            return dict(self._last_poll_data)
-
+        resp = self._sqm_send("W")
         if resp.startswith("A"):
             resp = resp[1:]
         parts = resp.split(" ")
@@ -190,10 +173,8 @@ class SQMController(BaseDevice):
             data[f"ch{n}_rate"] = rate
             data[f"ch{n}_thickness"] = thickness
             data[f"ch{n}_frequency"] = frequency
-            # Per-field units
             data[f"ch{n}_rate_unit"] = self._units.get("rate", "")
             data[f"ch{n}_thickness_unit"] = self._units.get("thickness", "")
             data[f"ch{n}_frequency_unit"] = self._units.get("frequency", "")
 
-        self._last_poll_data = data
         return data
