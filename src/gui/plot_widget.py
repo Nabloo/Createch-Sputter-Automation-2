@@ -20,6 +20,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QPushButton,
@@ -175,10 +176,9 @@ class PlotWidget(QWidget):
         self._auto_btn.setToolTip("Reset auto-scaling")
         toolbar.addWidget(self._auto_btn)
 
-        self._log_btn = QPushButton("Log")
+        self._log_btn = QCheckBox("Y-Axis Log. Scale")
         self._log_btn.setToolTip("Toggle y-axis logarithmic scale")
-        self._log_btn.setCheckable(True)
-        self._log_btn.clicked.connect(self._on_toggle_y_log)
+        self._log_btn.toggled.connect(self._on_toggle_y_log)
         toolbar.addWidget(self._log_btn)
 
         toolbar.addStretch()
@@ -527,10 +527,9 @@ class PlotWidget(QWidget):
         self._plot.getPlotItem().setLogMode(y=enabled)
         self._log_btn.blockSignals(True)
         self._log_btn.setChecked(enabled)
-        self._log_btn.setText("Log" if enabled else "Lin")
         self._log_btn.blockSignals(False)
         self._log_btn.setToolTip(
-            "Y-axis is logarithmic" if enabled else "Y-axis is linear (click to toggle)"
+            "Y-axis is logarithmic" if enabled else "Y-axis is linear"
         )
         if enabled:
             # Auto-range with log scale — must re-enable to recalculate

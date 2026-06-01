@@ -268,7 +268,7 @@ class DeviceManager:
             # ---- Switch to View Log mode ----
             w._mode_toggle.blockSignals(True)
             w._mode_toggle.setChecked(True)
-            w._mode_toggle.setText("\u26ab  View Log")
+            w._mode_toggle.setText("\u26ab  Live")
             w._mode_toggle.blockSignals(False)
             w.set_log_controls_visible(True)
 
@@ -279,7 +279,7 @@ class DeviceManager:
             # ---- Switch to Live mode ----
             w._mode_toggle.blockSignals(True)
             w._mode_toggle.setChecked(False)
-            w._mode_toggle.setText("\u26ab  Live")
+            w._mode_toggle.setText("\u26ab  View Log")
             w._mode_toggle.blockSignals(False)
             w.set_log_controls_visible(False)
 

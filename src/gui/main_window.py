@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         row2_layout.setSpacing(2)
 
         # Mode toggle (Live / View Log)
-        self._mode_toggle = QPushButton("\u26ab  Live")
+        self._mode_toggle = QPushButton("\u26ab  View Log")
         self._mode_toggle.setCheckable(True)
         self._mode_toggle.setToolTip("Switch between live data and log viewer")
         self._mode_toggle.setMinimumWidth(80)
