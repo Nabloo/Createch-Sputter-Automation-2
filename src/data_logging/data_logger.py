@@ -73,8 +73,10 @@ class DataLogger:
         self._store = store
         self._lock = threading.RLock()
 
-        # Buffered rows waiting for the next flush
-        self._buffers: List[List[Any]] = []
+        # Buffered rows waiting for the next flush — stored as dicts
+        # {header_name: value} so alignment to _file_headers is
+        # always correct even when columns grow between buffer and flush.
+        self._buffers: List[Dict[str, Any]] = []
 
         # ---- Active file state (per-date) ----
         self._file_handle: Any = None
@@ -83,9 +85,9 @@ class DataLogger:
         # Accumulated column names / units (grow as new devices appear)
         self._file_headers: List[str] = []   # row 1 column names
         self._file_units: List[str] = []     # row 2 unit strings
-        # All rows already flushed to disk — kept in memory for potential
-        # rewrite when columns are merged on first write by a new device.
-        self._flushed_rows: List[List[Any]] = []
+        # Dict-of-rows already flushed — kept in memory for potential
+        # rewrite when columns are merged (new device writes).
+        self._flushed_rows: List[Dict[str, Any]] = []
 
         # -------- Timezone resolution --------
         try:
@@ -132,9 +134,13 @@ class DataLogger:
                 # Check whether this device adds new columns
                 self._merge_columns(dev_headers, dev_units)
 
-            # Build and enqueue the row
-            row = self._build_row(local_ts, data)
-            self._buffers.append(row)
+            # Build row values and store as a dict keyed by header name.
+            # Alignment to _file_headers happens at flush time.
+            values = self._build_row(local_ts, data)
+            row_dict: Dict[str, Any] = {}
+            for header, val in zip(dev_headers, values):
+                row_dict[header] = val
+            self._buffers.append(row_dict)
 
             self._maybe_flush()
 
@@ -203,7 +209,8 @@ class DataLogger:
             writer = csv.writer(f)
             writer.writerow(self._file_headers)
             writer.writerow(self._file_units)
-            for row in self._flushed_rows:
+            for row_dict in self._flushed_rows:
+                row = [row_dict.get(h, "") for h in self._file_headers]
                 writer.writerow(row)
         # Reopen in append mode
         self._file_handle = open(self._file_path, "a", newline="", encoding="utf-8")
@@ -245,9 +252,10 @@ class DataLogger:
             # Dict-of-dicts (VCU style): keys are channel numbers
             for ch_key in sorted(data.keys()):
                 ch_data = data[ch_key]
-                unit = ch_data.get("unit", "")
+                # VCU stores the unit as "pressure_unit", not "unit"
+                unit = ch_data.get("pressure_unit", "")
                 for field in sorted(ch_data.keys()):
-                    if field == "unit":
+                    if field == "pressure_unit":
                         continue
                     headers.append(f"{device_id}_ch{ch_key}_{field}")
                     if field == "pressure" and unit:
@@ -289,7 +297,7 @@ class DataLogger:
             for ch_key in sorted(data.keys()):
                 ch_data = data[ch_key]
                 for field in sorted(ch_data.keys()):
-                    if field == "unit":
+                    if field == "pressure_unit":
                         continue
                     row.append(ch_data[field])
         else:
@@ -315,30 +323,18 @@ class DataLogger:
         self._last_flush_time = now
 
     def _flush_all(self) -> None:
-        """Write all buffered rows to disk, aligning with the active file's columns."""
+        """Write all buffered rows to disk, aligning to the active file's columns."""
         if not self._buffers or self._file_handle is None:
             return
 
         writer = csv.writer(self._file_handle)
-        for row in self._buffers:
-            # Align row to the current file's header set
-            padded = self._pad_row(row)
-            writer.writerow(padded)
-            self._flushed_rows.append(padded)
+        for row_dict in self._buffers:
+            # Align to _file_headers — each value goes to its named column
+            row = [row_dict.get(h, "") for h in self._file_headers]
+            writer.writerow(row)
+            self._flushed_rows.append(row_dict)
         self._file_handle.flush()
         self._buffers.clear()
-
-    def _pad_row(self, row: List[Any]) -> List[Any]:
-        """Pad *row* to match ``_file_headers`` length.
-
-        The row length matches the device's own header list, but the file
-        may have grown columns from other devices.  Missing columns are
-        filled with empty strings.
-        """
-        n = len(self._file_headers)
-        if len(row) >= n:
-            return row[:n]
-        return row + [""] * (n - len(row))
 
     # ------------------------------------------------------------------
     # Lifecycle
