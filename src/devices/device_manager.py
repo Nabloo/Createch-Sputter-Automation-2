@@ -697,13 +697,29 @@ class DeviceManager:
         # Push updated channel_units for all devices
         plot.set_all_channel_units(self._build_channel_units_map())
 
-        # Replay historical data from DataStore so the plot fills up
-        # immediately instead of waiting for the next poll interval.
-        history: Dict[str, list] = {}
-        for ch in dev.plot_channels:
-            history[ch] = self._store.get_history(new_device_id, ch)
-        if any(history.values()):
-            plot.load_history(history)
+        if not self._view_mode_live and self._log_data is not None:
+            # In log-viewer mode, re-render the CSV data for the new device
+            # instead of replaying live DataStore history.
+            w = self._window
+            from_qdt = w._from_dt.dateTime()
+            to_qdt = w._to_dt.dateTime()
+            t_start = from_qdt.toPython().replace(tzinfo=None)
+            t_end = to_qdt.toPython().replace(tzinfo=None)
+            x_axis_mode = "relative" if w._xaxis_combo.currentIndex() == 0 else "absolute"
+            plot.load_log_data(
+                self._log_data,
+                t_range_start=t_start,
+                t_range_end=t_end,
+                x_axis_mode=x_axis_mode,
+            )
+        else:
+            # Replay historical data from DataStore so the plot fills up
+            # immediately instead of waiting for the next poll interval.
+            history: Dict[str, list] = {}
+            for ch in dev.plot_channels:
+                history[ch] = self._store.get_history(new_device_id, ch)
+            if any(history.values()):
+                plot.load_history(history)
 
         # Update the y-axis label to match the new device's units.
         # set_channels already enforces single-unit-group visibility.

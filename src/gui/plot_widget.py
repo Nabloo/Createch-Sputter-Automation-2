@@ -370,6 +370,7 @@ class PlotWidget(QWidget):
             ``"absolute"`` → Unix epoch seconds (label ``"Time"``).
         """
         self._log_mode = True
+        self._clear_btn.setEnabled(False)
         self._clear_log_curves()
         self._log_data_cache.clear()
         # Clear live curves from the screen
@@ -434,6 +435,7 @@ class PlotWidget(QWidget):
     def clear_log_data(self) -> None:
         """Exit log-viewer mode and resume live data buffering."""
         self._log_mode = False
+        self._clear_btn.setEnabled(True)
         self._clear_log_curves()
         self._log_data_cache.clear()
         # Clear any rendered data from the screen

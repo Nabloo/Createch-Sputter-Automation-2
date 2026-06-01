@@ -215,9 +215,15 @@ class LogFileReader(QObject):
                 worker.error.disconnect(self._on_worker_error)
             except (TypeError, RuntimeError):
                 pass
-        if thread is not None and thread.isRunning():
-            thread.quit()
-            thread.wait(1000)
+            self._worker = None
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(1000)
+            except RuntimeError:
+                pass  # C++ object already deleted after previous load finished
+            self._thread = None
 
     def _on_worker_finished(self, data: LogData) -> None:
         """Worker success — forward to public signal."""
