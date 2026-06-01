@@ -358,9 +358,11 @@ class PlotWidget(QWidget):
                 if not xs:
                     scatter.setData([], [])
                     continue
-                # Log scale cannot display y ≤ 0 — filter before decimation
+                # Log scale cannot display y ≤ 0 — filter before decimation.
+                # ScatterPlotItem does NOT auto-transform data for log scale
+                # (unlike PlotDataItem), so we must apply log10 to y-values.
                 if self._y_log:
-                    filtered = [(x, y) for x, y in zip(xs, ys) if y > 0]
+                    filtered = [(x, math.log10(y)) for x, y in zip(xs, ys) if y > 0]
                     if filtered:
                         f_xs, f_ys = zip(*filtered)
                         xs, ys = list(f_xs), list(f_ys)
@@ -388,9 +390,11 @@ class PlotWidget(QWidget):
                 ys_list = [p[1] for p in buf]
                 if self._x_axis_mode == "absolute" and self._t0 is not None:
                     xs_list = [x + self._t0 for x in xs_list]
-                # Log scale cannot display y ≤ 0 — filter before decimation
+                # Log scale cannot display y ≤ 0 — filter before decimation.
+                # ScatterPlotItem does NOT auto-transform data for log scale
+                # (unlike PlotDataItem), so we must apply log10 to y-values.
                 if self._y_log:
-                    filtered = [(x, y) for x, y in zip(xs_list, ys_list) if y > 0]
+                    filtered = [(x, math.log10(y)) for x, y in zip(xs_list, ys_list) if y > 0]
                     if filtered:
                         f_xs, f_ys = zip(*filtered)
                         xs_list, ys_list = list(f_xs), list(f_ys)
