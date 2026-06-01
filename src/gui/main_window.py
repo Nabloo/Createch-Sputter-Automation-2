@@ -392,7 +392,6 @@ class MainWindow(QMainWindow):
             self._theme_action.setText("&Dark Theme")
         else:
             apply_light_theme(self._app)
-            self._theme_action.setText("&Light Theme")
         # Persist theme preference immediately (not just on quit)
         if hasattr(self, '_config'):
             self._config.setdefault("gui", {})["theme"] = "dark" if checked else "light"
