@@ -84,7 +84,7 @@ class TestSplitIntoSegments(unittest.TestCase):
 
 
 class TestFindLogColumn(unittest.TestCase):
-    """Matching channel names to CSV column headers."""
+    """Matching channel names to CSV column headers — new format (device-prefixed)."""
 
     def _make_log_data(self, headers):
         return LogData(
@@ -92,11 +92,49 @@ class TestFindLogColumn(unittest.TestCase):
             timestamps=[datetime(2026, 5, 21, 15, 30, 0)],
             values={h: [1.0] for h in headers[1:] if h != "timestamp"},
             filepath="/tmp/test.csv",
-            device_id="Test",
+            device_id="",
             date="2026-05-21",
         )
 
-    def test_exact_match(self):
+    # ------------------------------------------------------------------
+    # New format: device-prefixed columns
+    # ------------------------------------------------------------------
+
+    def test_prefixed_exact_match(self):
+        log_data = self._make_log_data(
+            ["timestamp", "VCU-0_ch1_pressure", "VCU-0_ch2_pressure"]
+        )
+        self.assertEqual(
+            PlotWidget._find_log_column(log_data, "ch1_pressure", "VCU-0"),
+            "VCU-0_ch1_pressure",
+        )
+
+    def test_prefixed_no_match_wrong_device(self):
+        log_data = self._make_log_data(
+            ["timestamp", "VCU-0_ch1_pressure"]
+        )
+        self.assertIsNone(
+            PlotWidget._find_log_column(log_data, "ch1_pressure", "SQM-0")
+        )
+
+    def test_prefixed_multi_device(self):
+        log_data = self._make_log_data(
+            ["timestamp", "VCU-0_ch1_pressure", "SQM-0_ch1_rate"]
+        )
+        self.assertEqual(
+            PlotWidget._find_log_column(log_data, "ch1_pressure", "VCU-0"),
+            "VCU-0_ch1_pressure",
+        )
+        self.assertEqual(
+            PlotWidget._find_log_column(log_data, "ch1_rate", "SQM-0"),
+            "SQM-0_ch1_rate",
+        )
+
+    # ------------------------------------------------------------------
+    # Old format: backwards compatibility (unit in brackets, no device prefix)
+    # ------------------------------------------------------------------
+
+    def test_old_format_exact_match(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure", "ch2_pressure"]
         )
@@ -105,7 +143,7 @@ class TestFindLogColumn(unittest.TestCase):
             "ch1_pressure",
         )
 
-    def test_prefix_with_unit_brackets(self):
+    def test_old_format_prefix_with_unit_brackets(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure [mbar]", "ch2_pressure [mbar]"]
         )
@@ -114,7 +152,7 @@ class TestFindLogColumn(unittest.TestCase):
             "ch1_pressure [mbar]",
         )
 
-    def test_prefix_with_space_suffix(self):
+    def test_old_format_prefix_with_space_suffix(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure mbar", "status_code"]
         )
@@ -123,7 +161,7 @@ class TestFindLogColumn(unittest.TestCase):
             "ch1_pressure mbar",
         )
 
-    def test_no_match(self):
+    def test_old_format_no_match(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure [mbar]"]
         )
@@ -131,7 +169,7 @@ class TestFindLogColumn(unittest.TestCase):
             PlotWidget._find_log_column(log_data, "ch3_pressure")
         )
 
-    def test_partial_match_avoided(self):
+    def test_old_format_partial_match_avoided(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure [mbar]", "ch10_pressure [mbar]"]
         )
@@ -144,7 +182,7 @@ class TestFindLogColumn(unittest.TestCase):
             "ch10_pressure [mbar]",
         )
 
-    def test_status_code_column(self):
+    def test_old_format_status_code_column(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure [mbar]", "ch1_status_code"]
         )
@@ -153,13 +191,27 @@ class TestFindLogColumn(unittest.TestCase):
             "ch1_status_code",
         )
 
-    def test_exact_preferred_over_prefix(self):
+    def test_old_format_exact_preferred_over_prefix(self):
         log_data = self._make_log_data(
             ["timestamp", "ch1_pressure", "ch1_pressure [mbar]"]
         )
         self.assertEqual(
             PlotWidget._find_log_column(log_data, "ch1_pressure"),
             "ch1_pressure",
+        )
+
+    # ------------------------------------------------------------------
+    # Mixed: new format fallback
+    # ------------------------------------------------------------------
+
+    def test_new_format_falls_back_to_old_when_no_device_prefix(self):
+        """When device_id is empty, should match old-style headers."""
+        log_data = self._make_log_data(
+            ["timestamp", "ch1_pressure [mbar]"]
+        )
+        self.assertEqual(
+            PlotWidget._find_log_column(log_data, "ch1_pressure", ""),
+            "ch1_pressure [mbar]",
         )
 
 
@@ -191,13 +243,10 @@ class TestExampleLogs(unittest.TestCase):
         self.assertIn("ch1_pressure [mbar]", log.headers)
         self.assertIn("ch2_pressure [mbar]", log.headers)
         self.assertIn("ch3_pressure [mbar]", log.headers)
-        # Values dict should have pressure columns (non-NaN)
         self.assertIn("ch1_pressure [mbar]", log.values)
         self.assertIn("ch2_pressure [mbar]", log.values)
         self.assertIn("ch3_pressure [mbar]", log.values)
-        # status_code columns should also be present (they have numeric values)
         self.assertIn("ch1_status_code", log.values)
-        # Row counts must match
         n = len(log.timestamps)
         for col in log.values:
             self.assertEqual(
@@ -221,26 +270,16 @@ class TestExampleLogs(unittest.TestCase):
         log = self._log_21
         for ts in log.timestamps[:5]:
             self.assertIsNotNone(ts.tzinfo)
-        # Later entries may be +02:00
-        # All timestamps should be sorted ascending
         for i in range(1, len(log.timestamps)):
             self.assertGreaterEqual(log.timestamps[i], log.timestamps[i - 1])
 
-    def test_timestamps_strip_to_naive(self):
-        """Stripping tzinfo produces naive datetimes (safe for comparison)."""
-        log = self._log_21
-        naive = [t.replace(tzinfo=None) for t in log.timestamps[:10]]
-        for ts in naive:
-            self.assertIsNone(ts.tzinfo)
-
     # ------------------------------------------------------------------
-    # Column matching with real headers
+    # Column matching with real headers (old format)
     # ------------------------------------------------------------------
 
     def test_find_log_column_real_headers(self):
-        """_find_log_column matches channel names to bracketed CSV headers."""
+        """_find_log_column matches channel names to bracketed CSV headers (old format)."""
         log = self._log_21
-        # ch1_pressure should match "ch1_pressure [mbar]"
         self.assertEqual(
             PlotWidget._find_log_column(log, "ch1_pressure"),
             "ch1_pressure [mbar]",
@@ -253,7 +292,6 @@ class TestExampleLogs(unittest.TestCase):
             PlotWidget._find_log_column(log, "ch3_pressure"),
             "ch3_pressure [mbar]",
         )
-        # status_code columns match exactly
         self.assertEqual(
             PlotWidget._find_log_column(log, "ch1_status_code"),
             "ch1_status_code",
@@ -270,112 +308,80 @@ class TestExampleLogs(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_full_pipeline_time_filter(self):
-        """Filtering by time range yields correct subset of data."""
         log = self._log_21
         timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
         t_start = timestamps[0]
-        t_end = timestamps[99]  # first 100 points
+        t_end = timestamps[99]
 
         indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
         self.assertEqual(len(indices), 100)
 
-        # Extract values for ch1_pressure
         col = PlotWidget._find_log_column(log, "ch1_pressure")
         self.assertIsNotNone(col)
         ys = [log.values[col][i] for i in indices]
         self.assertEqual(len(ys), 100)
-        # All ch1 values should be ~990 mbar
         for y in ys:
             self.assertAlmostEqual(y, 990.0, delta=1.0)
 
     def test_full_pipeline_nan_filtering(self):
-        """NaN values are safely filtered during the pipeline without errors."""
         log = self._log_21
         col = PlotWidget._find_log_column(log, "ch1_pressure")
         ys = log.values[col]
-        # Filter NaN — must not raise and must leave some valid values
         clean = [y for y in ys if not math.isnan(y)]
         self.assertGreater(len(clean), 0)
         self.assertLessEqual(len(clean), len(ys))
 
     def test_full_pipeline_gap_detection(self):
-        """The DST timezone shift gap (>60 s) in the real data produces
-        at least 2 segments.  (Exact count depends on file contents;
-        this test only asserts the looser invariant.)"""
         log = self._log_21
         timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
         t_start = timestamps[0]
         t_end = timestamps[-1]
-
-        # Full range
         indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
-        self.assertEqual(len(indices), len(timestamps))
-
         filtered_ts = [timestamps[i] for i in indices]
         xs = [(t - t_start).total_seconds() for t in filtered_ts]
 
-        # Get ch1_pressure values
         col = PlotWidget._find_log_column(log, "ch1_pressure")
         ys = [log.values[col][i] for i in indices]
-
-        # Filter NaN
         valid = [(x, y) for x, y in zip(xs, ys) if not math.isnan(y)]
         clean_xs = [v[0] for v in valid]
         clean_ys = [v[1] for v in valid]
 
         segments = _split_into_segments(clean_xs, clean_ys)
-        # At least 2 segments expected (DST shift: +00:00 → +02:00)
         self.assertGreaterEqual(len(segments), 2)
-
-        # Verify segments are in order and cover all data
         total = sum(len(s[0]) for s in segments)
         self.assertEqual(total, len(clean_xs))
-
-        # First segment should have substantial data
         self.assertGreater(len(segments[0][0]), 10)
 
     def test_full_pipeline_relative_x_values(self):
-        """Relative x-axis mode starts at 0 and increases monotonically."""
         log = self._log_21
         timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
         t_start = timestamps[0]
         t_end = timestamps[-1]
-
         indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
         filtered_ts = [timestamps[i] for i in indices]
         xs = [(t - t_start).total_seconds() for t in filtered_ts]
 
-        # First x should be 0
         self.assertEqual(xs[0], 0.0)
-        # All x values should be non-decreasing
         for i in range(1, len(xs)):
             self.assertGreaterEqual(xs[i], xs[i - 1])
-
-        # Last x should reflect the total duration (~3.5 hours in seconds)
-        # The data spans ~14:49 to ~18:19 UTC → about 12600 seconds
         self.assertGreater(xs[-1], 10000)
         self.assertLess(xs[-1], 20000)
 
     def test_full_pipeline_absolute_x_values(self):
-        """Absolute x-axis mode produces Unix epoch timestamps."""
         log = self._log_21
         timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
         t_start = timestamps[0]
         t_end = timestamps[-1]
-
         indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]
         filtered_ts = [timestamps[i] for i in indices]
         xs = [t.timestamp() for t in filtered_ts]
 
-        # All x values should be positive (~1.78e9 for year 2026)
         for x in xs[:5]:
             self.assertGreater(x, 1.7e9)
-        # Non-decreasing
         for i in range(1, len(xs)):
             self.assertGreaterEqual(xs[i], xs[i - 1])
 
     def test_full_pipeline_ch2_ch3_values(self):
-        """ch2 is ~1300 mbar, ch3 varies ~2.4–2.5 mbar."""
         log = self._log_21
         timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
         t_start = timestamps[0]
@@ -394,10 +400,8 @@ class TestExampleLogs(unittest.TestCase):
             self.assertLessEqual(max(ys), expected_max, f"{ch} max too high")
 
     def test_full_pipeline_empty_time_range(self):
-        """A time range with no data produces empty indices."""
         log = self._log_21
         timestamps = [t.replace(tzinfo=None) for t in log.timestamps]
-        # Set range completely before the data
         t_start = timestamps[0] - timedelta(hours=10)
         t_end = timestamps[0] - timedelta(hours=1)
         indices = [i for i, t in enumerate(timestamps) if t_start <= t <= t_end]

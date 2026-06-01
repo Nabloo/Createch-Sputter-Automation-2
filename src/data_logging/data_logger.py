@@ -1,12 +1,16 @@
 """Thread-safe CSV data logger with daily rotation and buffered writes.
 
-Subscribes to the DataStore and writes every measurement to a CSV file
-named ``logs/YYYY-MM-DD_<device_id>.csv``.  A new file is created when
-the day changes (rotation at midnight UTC).  Writes are buffered and
-flushed periodically to minimise data loss on crash.
+Subscribes to the DataStore and writes every measurement to a single CSV file
+per day named ``logs/YYYY-MM-DD.csv``.  All devices share the same file.
+A new file is created when the day changes (rotation at midnight UTC).
 
-CSV headers include the measurement unit in the column name for
-pressure channels (e.g. ``ch1_pressure [mbar]``).
+CSV format (3+ rows):
+  Row 1 — clean column names: ``timestamp, VCU-0_ch1_pressure, SQM-0_ch1_rate, …``
+  Row 2 — units per column:  ``, mbar, Hz, …``  (empty for unitless columns)
+  Row 3+ — data rows
+
+Columns are accumulated lazily: when a new device writes for the first time on
+a given day, its columns are merged into the header and the file is rewritten.
 """
 
 import csv
@@ -15,7 +19,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.data.datastore import DataStore
 
@@ -26,7 +30,7 @@ class DataLogger:
     """Thread-safe CSV logger for device measurements.
 
     Subscribes to a :class:`~src.data.datastore.DataStore` and writes
-    every measurement update to a device-specific CSV file inside the
+    every measurement update to a single CSV file per day inside the
     configured log directory.
 
     Features
@@ -34,9 +38,12 @@ class DataLogger:
     - **Daily rotation**: a new file is opened when the date part of the
       timestamp changes (UTC midnight).
     - **Buffered writes**: rows are held in memory and flushed every
-      *flush_interval* seconds, or when the device file is rotated.
-    - **Metadata headers**: the first row of each file is a header
-      that includes channel names and measurement units.
+      *flush_interval* seconds, or when the file is rotated.
+    - **Unit row**: row 2 of each file contains measurement units;
+      row 1 has clean column names.
+    - **Lazy column accumulation**: when a new device writes for the
+      first time on a given day, its columns are merged in and the file
+      is transparently rewritten.
     - **Thread-safe**: multiple polling workers can push data concurrently;
       internal locking ensures file operations are serialised.
 
@@ -45,7 +52,7 @@ class DataLogger:
     - ``enabled`` (bool, default True)
     - ``directory`` (str, default ``"logs"``)
     - ``rotation_enabled`` (bool, default True)
-    - ``flush_interval`` (float, default 5.0) – seconds between forced flushes
+    - ``flush_interval`` (float, default 5.0) — seconds between forced flushes
 
     Usage::
 
@@ -66,21 +73,26 @@ class DataLogger:
         self._store = store
         self._lock = threading.RLock()
 
-        # device_id → list of CSV rows (each row is a list) waiting to be flushed
-        self._buffers: Dict[str, List[List[Any]]] = {}
-        # "{device_id}_{date_str}" → {"file": handle, "headers": [...]}
-        self._files: Dict[str, Dict[str, Any]] = {}
-        # device_id → last date string (for midnight-rotation detection)
-        self._last_date: Dict[str, str] = {}
+        # Buffered rows waiting for the next flush
+        self._buffers: List[List[Any]] = []
+
+        # ---- Active file state (per-date) ----
+        self._file_handle: Any = None
+        self._file_path: str = ""
+        self._file_date: str = ""
+        # Accumulated column names / units (grow as new devices appear)
+        self._file_headers: List[str] = []   # row 1 column names
+        self._file_units: List[str] = []     # row 2 unit strings
+        # All rows already flushed to disk — kept in memory for potential
+        # rewrite when columns are merged on first write by a new device.
+        self._flushed_rows: List[List[Any]] = []
 
         # -------- Timezone resolution --------
-        # Try to auto-detect OS timezone, fall back to GMT+2
         try:
             os_tz = datetime.now(timezone.utc).astimezone().tzinfo
             detected_tz = os_tz if os_tz is not None else timezone(timedelta(hours=2))
         except Exception:
             detected_tz = timezone(timedelta(hours=2))
-        # Config can override (handy for deterministic tests)
         tz_offset = log_cfg.get("timezone_offset")
         self._tz = timezone(timedelta(hours=tz_offset)) if tz_offset is not None else detected_tz
 
@@ -95,7 +107,7 @@ class DataLogger:
             )
 
     # ------------------------------------------------------------------
-    # DataStore callback (called from acquisition worker threads)
+    # DataStore callback
     # ------------------------------------------------------------------
 
     def _on_data(
@@ -106,152 +118,170 @@ class DataLogger:
             return
 
         with self._lock:
-            # Determine the date in the log timezone for rotation tracking
             aware = timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=timezone.utc)
             local_ts = aware.astimezone(self._tz)
             date_str = local_ts.strftime("%Y-%m-%d")
-            file_info = self._ensure_file(device_id, date_str, data)
-            if file_info is None:
-                return  # headers not yet determined – row buffered for next call
 
-            # Build the CSV row (timestamp in log timezone)
-            row = self._build_row(local_ts, data, file_info["headers"])
-            self._buffers.setdefault(device_id, []).append(row)
+            # Derive the columns this device contributes
+            dev_headers, dev_units = self._derive_device_columns(device_id, data)
 
-            # Flush if enough time has passed
+            # Rotate or open file if needed
+            if self._file_date != date_str:
+                self._rotate(date_str, dev_headers, dev_units)
+            else:
+                # Check whether this device adds new columns
+                self._merge_columns(dev_headers, dev_units)
+
+            # Build and enqueue the row
+            row = self._build_row(local_ts, data)
+            self._buffers.append(row)
+
             self._maybe_flush()
 
     # ------------------------------------------------------------------
     # File management
     # ------------------------------------------------------------------
 
-    def _ensure_file(
-        self,
-        device_id: str,
-        date_str: str,
-        data: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Return the open-file info for *device_id* on *date_str*.
+    def _rotate(self, date_str: str, dev_headers: List[str], dev_units: List[str]) -> None:
+        """Close the current file and open a new one for *date_str*."""
+        self._flush_all()
+        self._close_file()
+        self._file_date = date_str
+        self._file_headers = list(dev_headers)
+        self._file_units = list(dev_units)
+        self._flushed_rows.clear()
+        self._buffers.clear()
+        self._open_file()
 
-        Opens a new file and writes headers on first use or day change.
-        Returns ``None`` if headers are not yet determined (first data
-        point for a device) — the caller should buffer the row and retry
-        on the next call after headers are set.
+    def _merge_columns(self, dev_headers: List[str], dev_units: List[str]) -> None:
+        """Merge device columns into the active file's column set.
+
+        If new columns appear, the file is rewritten with the updated
+        header rows and all previously flushed rows.
         """
-        key = f"{device_id}_{date_str}"
+        new_headers = list(self._file_headers)
+        new_units = list(self._file_units)
+        changed = False
+        for h, u in zip(dev_headers, dev_units):
+            if h not in new_headers:
+                new_headers.append(h)
+                new_units.append(u)
+                changed = True
 
-        # Already open for this device + date?
-        if key in self._files:
-            return self._files[key]
+        if not changed:
+            return
 
-        # Rotation: close the previous day's file for this device
-        if self._rotation_enabled and device_id in self._last_date:
-            if self._last_date[device_id] != date_str:
-                self._close_device(device_id)
+        # Close and rewrite the file with the expanded column set
+        self._file_handle.close()
+        self._file_headers = new_headers
+        self._file_units = new_units
+        self._rewrite_file()
 
-        # Open new file
-        filename = f"{date_str}_{device_id}.csv"
-        filepath = os.path.join(self._directory, filename)
+    def _open_file(self) -> None:
+        """Create or open the current-date file in append mode."""
+        filename = f"{self._file_date}.csv"
+        self._file_path = os.path.join(self._directory, filename)
         try:
-            f = open(filepath, "a", newline="", encoding="utf-8")
+            self._file_handle = open(self._file_path, "a", newline="", encoding="utf-8")
         except OSError:
-            logger.exception("DataLogger: cannot open %s", filepath)
-            return None
+            logger.exception("DataLogger: cannot open %s", self._file_path)
+            self._file_handle = None
+            return
 
-        # Generate headers from the first data point's structure
-        headers = self._generate_headers(data)
-        file_info: Dict[str, Any] = {
-            "file": f,
-            "headers": headers,
-            "path": filepath,
-        }
-        self._files[key] = file_info
-        self._last_date[device_id] = date_str
+        # Write headers if the file is new
+        self._file_handle.seek(0, os.SEEK_END)
+        if self._file_handle.tell() == 0:
+            writer = csv.writer(self._file_handle)
+            writer.writerow(self._file_headers)
+            writer.writerow(self._file_units)
+            self._file_handle.flush()
+            logger.info("DataLogger: created %s (%d columns)", self._file_path, len(self._file_headers))
 
-        # Write headers (only if the file is new / empty)
-        f.seek(0, os.SEEK_END)
-        if f.tell() == 0:
+    def _rewrite_file(self) -> None:
+        """Rewrite the entire file with updated headers and all flushed rows."""
+        with open(self._file_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(headers)
-            f.flush()
-            logger.info("DataLogger: created %s", filepath)
+            writer.writerow(self._file_headers)
+            writer.writerow(self._file_units)
+            for row in self._flushed_rows:
+                writer.writerow(row)
+        # Reopen in append mode
+        self._file_handle = open(self._file_path, "a", newline="", encoding="utf-8")
+        logger.debug(
+            "DataLogger: rewrote %s with %d columns (+%d rows)",
+            self._file_path, len(self._file_headers), len(self._flushed_rows),
+        )
 
-        return file_info
-
-    def _close_device(self, device_id: str) -> None:
-        """Flush and close all open files for *device_id*."""
-        # Flush buffered rows first
-        buf = self._buffers.pop(device_id, None)
-        if buf:
-            # Find the current file for this device and write buffered rows
-            for key, info in list(self._files.items()):
-                if key.startswith(f"{device_id}_"):
-                    writer = csv.writer(info["file"])
-                    writer.writerows(buf)
-                    info["file"].flush()
-                    break
-            else:
-                logger.warning(
-                    "DataLogger: buffered rows for %s but no open file – dropped",
-                    device_id,
-                )
-
-        for key in list(self._files):
-            if key.startswith(f"{device_id}_"):
-                info = self._files.pop(key)
-                try:
-                    info["file"].close()
-                except OSError:
-                    pass
-                logger.debug("DataLogger: closed %s", info["path"])
+    def _close_file(self) -> None:
+        """Close the active file handle if open."""
+        if self._file_handle is not None:
+            try:
+                self._file_handle.close()
+            except OSError:
+                pass
+            self._file_handle = None
+            self._file_path = ""
+            logger.debug("DataLogger: closed %s", self._file_path)
 
     # ------------------------------------------------------------------
     # Row formatting
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _generate_headers(data: Dict[str, Any]) -> List[str]:
-        """Derive CSV column names from the structure of *data*.
+    def _derive_device_columns(
+        device_id: str, data: Dict[str, Any]
+    ) -> Tuple[List[str], List[str]]:
+        """Build (header_names, unit_strings) for the columns *device_id* contributes.
 
-        For VCU-style nested dicts each channel contributes columns
-        like ``ch1_pressure [mbar]``, ``ch1_status_code``, …
-        For flat dicts the keys are used directly.
+        Column names are prefixed with ``<device_id>_`` so they are unique
+        across devices (e.g. ``VCU-0_ch1_pressure``, ``SQM-0_ch1_rate``).
 
-        The ``unit`` field is folded into the pressure column name
-        rather than getting its own column.
+        Returns two parallel lists, always starting with ``"timestamp"`` / ``""``.
         """
         headers: List[str] = ["timestamp"]
+        units: List[str] = [""]
 
         if data and all(isinstance(v, dict) for v in data.values()):
-            # Dict-of-dicts (VCU style)
+            # Dict-of-dicts (VCU style): keys are channel numbers
             for ch_key in sorted(data.keys()):
                 ch_data = data[ch_key]
                 unit = ch_data.get("unit", "")
                 for field in sorted(ch_data.keys()):
                     if field == "unit":
                         continue
+                    headers.append(f"{device_id}_ch{ch_key}_{field}")
                     if field == "pressure" and unit:
-                        headers.append(f"ch{ch_key}_{field} [{unit}]")
+                        units.append(unit)
                     else:
-                        headers.append(f"ch{ch_key}_{field}")
+                        units.append("")
         else:
-            # Flat dict
+            # Flat dict (SQM style): keys like "ch1_rate", "ch1_rate_unit", …
+            # Group non-unit fields and pair them with their units.
+            skip_fields = set()
             for key in sorted(data.keys()):
+                if key.endswith("_unit"):
+                    skip_fields.add(key)
+            for key in sorted(data.keys()):
+                if key in skip_fields:
+                    continue
                 if isinstance(data[key], (int, float, str, type(None))):
-                    headers.append(key)
+                    headers.append(f"{device_id}_{key}")
+                    unit_key = key + "_unit"
+                    unit_val = data.get(unit_key, "")
+                    units.append(unit_val if isinstance(unit_val, str) else "")
 
-        return headers
+        return headers, units
 
     @staticmethod
     def _build_row(
         timestamp: datetime,
         data: Dict[str, Any],
-        headers: List[str],
     ) -> List[Any]:
-        """Format a measurement as a list suitable for ``csv.writer.writerow``.
+        """Build a data row from *data*.
 
-        Values are written in the same order as *headers*.
-        The first column is the ISO-8601 timestamp.
+        Column order matches ``_derive_device_columns``.  Only the
+        columns contributed by this device are filled; alignment to
+        the file's header is handled later via ``_pad_row``.
         """
         row: List[Any] = [timestamp.isoformat()]
 
@@ -264,6 +294,8 @@ class DataLogger:
                     row.append(ch_data[field])
         else:
             for key in sorted(data.keys()):
+                if key.endswith("_unit"):
+                    continue
                 val = data[key]
                 if isinstance(val, (int, float, str, type(None))):
                     row.append(val)
@@ -283,23 +315,30 @@ class DataLogger:
         self._last_flush_time = now
 
     def _flush_all(self) -> None:
-        """Write all buffered rows to disk and flush file handles."""
-        for device_id, rows in list(self._buffers.items()):
-            if not rows:
-                continue
-            # Find the open file for this device
-            for key, info in self._files.items():
-                if key.startswith(f"{device_id}_"):
-                    try:
-                        writer = csv.writer(info["file"])
-                        writer.writerows(rows)
-                        info["file"].flush()
-                    except OSError:
-                        logger.exception(
-                            "DataLogger: error writing to %s", info["path"]
-                        )
-                    break
-            self._buffers[device_id] = []
+        """Write all buffered rows to disk, aligning with the active file's columns."""
+        if not self._buffers or self._file_handle is None:
+            return
+
+        writer = csv.writer(self._file_handle)
+        for row in self._buffers:
+            # Align row to the current file's header set
+            padded = self._pad_row(row)
+            writer.writerow(padded)
+            self._flushed_rows.append(padded)
+        self._file_handle.flush()
+        self._buffers.clear()
+
+    def _pad_row(self, row: List[Any]) -> List[Any]:
+        """Pad *row* to match ``_file_headers`` length.
+
+        The row length matches the device's own header list, but the file
+        may have grown columns from other devices.  Missing columns are
+        filled with empty strings.
+        """
+        n = len(self._file_headers)
+        if len(row) >= n:
+            return row[:n]
+        return row + [""] * (n - len(row))
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -309,11 +348,9 @@ class DataLogger:
         """Force-flush all pending data to disk immediately."""
         with self._lock:
             self._flush_all()
-            # Also flush any open files that have no buffered rows
-            # (belt-and-suspenders)
-            for info in self._files.values():
+            if self._file_handle is not None:
                 try:
-                    info["file"].flush()
+                    self._file_handle.flush()
                 except OSError:
                     pass
             logger.debug("DataLogger: forced flush complete")
@@ -323,13 +360,5 @@ class DataLogger:
         with self._lock:
             self._enabled = False
             self._flush_all()
-            for device_id in list(self._buffers):
-                self._close_device(device_id)
-            # Any remaining open files (shouldn't be any, but be safe)
-            for info in self._files.values():
-                try:
-                    info["file"].close()
-                except OSError:
-                    pass
-            self._files.clear()
+            self._close_file()
         logger.info("DataLogger: shutdown complete")

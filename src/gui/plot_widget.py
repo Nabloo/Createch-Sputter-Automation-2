@@ -176,7 +176,7 @@ class PlotWidget(QWidget):
         self._auto_btn.setToolTip("Reset auto-scaling")
         toolbar.addWidget(self._auto_btn)
 
-        self._log_btn = QCheckBox("Y-Axis Log. Scale")
+        self._log_btn = QCheckBox("Y-Axis Log.")
         self._log_btn.setToolTip("Toggle y-axis logarithmic scale")
         self._log_btn.toggled.connect(self._on_toggle_y_log)
         toolbar.addWidget(self._log_btn)
@@ -405,8 +405,9 @@ class PlotWidget(QWidget):
             xs = [(t - t_range_start).total_seconds() for t in filtered_ts]
 
         # ---------- extract & render each channel ----------
+        dev_id = self._selected_device or self._device_id
         for ch_name in self._channels:
-            col_name = self._find_log_column(log_data, ch_name)
+            col_name = self._find_log_column(log_data, ch_name, dev_id)
             if col_name is None:
                 self._log_data_cache[ch_name] = ([], [])
             else:
@@ -971,14 +972,25 @@ class PlotWidget(QWidget):
 
     @staticmethod
     def _find_log_column(
-        log_data: LogData, channel_name: str,
+        log_data: LogData, channel_name: str, device_id: str = "",
     ) -> Optional[str]:
         """Find the CSV column that corresponds to *channel_name*.
 
-        Matching is done by prefix: ``ch1_pressure`` matches
-        ``ch1_pressure [mbar]`` or ``ch1_pressure``.
+        In new-format CSVs columns are prefixed with the device ID
+        (e.g. ``VCU-0_ch1_pressure``).  The method tries:
+
+        1. Exact match against ``{device_id}_{channel_name}``
+        2. Prefix match for old-format files where the unit was in brackets
+           (e.g. ``ch1_pressure [mbar]``).
+        3. Fallback: unprefixed exact match.
+
         Returns ``None`` when the channel has no counterpart in the log.
         """
+        prefixed = f"{device_id}_{channel_name}" if device_id else channel_name
+        for header in log_data.headers:
+            if header == prefixed:
+                return header
+        # Old-format: channel_name may appear with " [unit]" suffix
         for header in log_data.headers:
             if header == channel_name:
                 return header

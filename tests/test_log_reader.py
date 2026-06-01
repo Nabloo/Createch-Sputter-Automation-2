@@ -11,9 +11,14 @@ from src.data_logging.log_reader import LogData, LogFileReader, _parse_filename
 
 
 class TestParseFilename(unittest.TestCase):
-    """Filename parsing extracts date and device_id correctly."""
+    """Filename parsing extracts date from new and old format filenames."""
 
-    def test_standard_filename(self):
+    def test_new_format_single_file(self):
+        date_str, dev_id = _parse_filename("2026-05-21.csv")
+        self.assertEqual(date_str, "2026-05-21")
+        self.assertEqual(dev_id, "")
+
+    def test_old_format_with_device(self):
         date_str, dev_id = _parse_filename("2026-05-21_VCU-0.csv")
         self.assertEqual(date_str, "2026-05-21")
         self.assertEqual(dev_id, "VCU-0")
@@ -32,7 +37,7 @@ class TestParseFilename(unittest.TestCase):
 
 
 class TestLogFileReader(unittest.TestCase):
-    """CSV parsing correctness."""
+    """CSV parsing correctness — new format with unit row."""
 
     def _write_csv(self, name, lines):
         path = os.path.join(self._tmpdir, name)
@@ -48,20 +53,63 @@ class TestLogFileReader(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
-    def test_parse_valid_csv(self):
-        path = self._write_csv("2026-05-21_VCU-0.csv", [
-            ["timestamp", "ch1_pressure [mbar]", "ch1_status_code"],
+    # ------------------------------------------------------------------
+    # New format: row 1 = headers, row 2 = units, row 3+ = data
+    # ------------------------------------------------------------------
+
+    def test_parse_new_format_csv(self):
+        path = self._write_csv("2026-05-21.csv", [
+            ["timestamp", "VCU-0_ch1_pressure", "VCU-0_ch1_status_code"],
+            ["", "mbar", ""],
             ["2026-05-21T15:30:00+02:00", "1.23e-05", "0"],
             ["2026-05-21T15:30:01+02:00", "1.24e-05", "0"],
             ["2026-05-21T15:30:02+02:00", "1.25e-05", "0"],
         ])
         data = LogFileReader.read(path)
-        self.assertEqual(data.device_id, "VCU-0")
         self.assertEqual(data.date, "2026-05-21")
+        self.assertEqual(data.device_id, "")
         self.assertEqual(len(data.timestamps), 3)
-        self.assertEqual(len(data.values["ch1_pressure [mbar]"]), 3)
-        self.assertEqual(len(data.values["ch1_status_code"]), 3)
+        self.assertEqual(data.headers, ["timestamp", "VCU-0_ch1_pressure", "VCU-0_ch1_status_code"])
+        self.assertEqual(len(data.values["VCU-0_ch1_pressure"]), 3)
+        self.assertEqual(len(data.values["VCU-0_ch1_status_code"]), 3)
+        self.assertAlmostEqual(data.values["VCU-0_ch1_pressure"][0], 1.23e-05)
+
+    def test_parse_new_format_multi_device(self):
+        path = self._write_csv("2026-05-21.csv", [
+            ["timestamp", "VCU-0_ch1_pressure", "SQM-0_ch1_rate"],
+            ["", "mbar", "Hz"],
+            ["2026-05-21T15:30:00+02:00", "1.0", ""],
+            ["2026-05-21T15:30:01+02:00", "", "5.0"],
+        ])
+        data = LogFileReader.read(path)
+        self.assertEqual(len(data.timestamps), 2)
+        # VCU row: ch1_pressure = 1.0, SQM ch1_rate = NaN (empty)
+        self.assertAlmostEqual(data.values["VCU-0_ch1_pressure"][0], 1.0)
+        self.assertTrue(data.values["SQM-0_ch1_rate"][0] != data.values["SQM-0_ch1_rate"][0])  # NaN
+        # SQM row: ch1_pressure = NaN, SQM ch1_rate = 5.0
+        self.assertTrue(data.values["VCU-0_ch1_pressure"][1] != data.values["VCU-0_ch1_pressure"][1])  # NaN
+        self.assertAlmostEqual(data.values["SQM-0_ch1_rate"][1], 5.0)
+
+    # ------------------------------------------------------------------
+    # Old format (no unit row) — backwards compatibility
+    # ------------------------------------------------------------------
+
+    def test_parse_old_format_csv(self):
+        path = self._write_csv("2026-05-21_VCU-0.csv", [
+            ["timestamp", "ch1_pressure [mbar]", "ch1_status_code"],
+            ["2026-05-21T15:30:00+02:00", "1.23e-05", "0"],
+            ["2026-05-21T15:30:01+02:00", "1.24e-05", "0"],
+        ])
+        data = LogFileReader.read(path)
+        self.assertEqual(data.date, "2026-05-21")
+        self.assertEqual(data.device_id, "VCU-0")
+        self.assertEqual(len(data.timestamps), 2)
+        self.assertIn("ch1_pressure [mbar]", data.values)
         self.assertAlmostEqual(data.values["ch1_pressure [mbar]"][0], 1.23e-05)
+
+    # ------------------------------------------------------------------
+    # Edge cases
+    # ------------------------------------------------------------------
 
     def test_missing_file(self):
         with self.assertRaises(FileNotFoundError):
@@ -74,15 +122,17 @@ class TestLogFileReader(unittest.TestCase):
 
     def test_header_only(self):
         path = self._write_csv("hdr.csv", [
-            ["timestamp", "ch1_pressure [mbar]"],
+            ["timestamp", "VCU-0_ch1_pressure"],
+            ["", "mbar"],
         ])
         data = LogFileReader.read(path)
-        self.assertEqual(data.headers, ["timestamp", "ch1_pressure [mbar]"])
+        self.assertEqual(data.headers, ["timestamp", "VCU-0_ch1_pressure"])
         self.assertEqual(len(data.timestamps), 0)
 
     def test_unsorted_timestamps(self):
         path = self._write_csv("unsorted.csv", [
             ["timestamp", "val"],
+            ["", ""],
             ["2026-05-21T15:30:02+02:00", "3.0"],
             ["2026-05-21T15:30:00+02:00", "1.0"],
             ["2026-05-21T15:30:01+02:00", "2.0"],
@@ -92,12 +142,12 @@ class TestLogFileReader(unittest.TestCase):
         self.assertEqual(ts[0], datetime.fromisoformat("2026-05-21T15:30:00+02:00"))
         self.assertEqual(ts[1], datetime.fromisoformat("2026-05-21T15:30:01+02:00"))
         self.assertEqual(ts[2], datetime.fromisoformat("2026-05-21T15:30:02+02:00"))
-        # Values must follow the same sort order
         self.assertEqual(data.values["val"], [1.0, 2.0, 3.0])
 
     def test_non_numeric_columns_skipped(self):
         path = self._write_csv("mixed.csv", [
             ["timestamp", "pressure", "note"],
+            ["", "mbar", ""],
             ["2026-05-21T15:30:00+02:00", "1.5", "ok"],
             ["2026-05-21T15:30:01+02:00", "2.0", "warning"],
         ])
@@ -109,6 +159,7 @@ class TestLogFileReader(unittest.TestCase):
     def test_blank_lines_skipped(self):
         path = self._write_csv("blanks.csv", [
             ["timestamp", "val"],
+            ["", ""],
             ["2026-05-21T15:30:00+02:00", "1.0"],
             [],
             ["", ""],
@@ -120,6 +171,7 @@ class TestLogFileReader(unittest.TestCase):
     def test_filepath_is_absolute(self):
         path = self._write_csv("rel.csv", [
             ["timestamp", "val"],
+            ["", ""],
             ["2026-05-21T15:30:00+02:00", "1.0"],
         ])
         data = LogFileReader.read(path)

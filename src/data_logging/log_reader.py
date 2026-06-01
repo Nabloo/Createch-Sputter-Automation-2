@@ -24,8 +24,7 @@ class LogData:
     Attributes
     ----------
     headers:
-        Original CSV column names (row 1), e.g. ``["timestamp",
-        "ch1_pressure [mbar]", "ch1_status_code", ...]``.
+        Clean column names (row 1), e.g. ``["timestamp", "VCU-0_ch1_pressure", ...]``.
     timestamps:
         Parsed timestamps, sorted ascending.
     values:
@@ -34,8 +33,7 @@ class LogData:
     filepath:
         Absolute path to the source CSV file.
     device_id:
-        Device identifier extracted from the filename
-        (the part after ``YYYY-MM-DD_`` and before ``.csv``).
+        Always empty for unified files (was the device identifier in old format).
     date:
         Date string extracted from the filename (``YYYY-MM-DD``).
     """
@@ -47,7 +45,10 @@ class LogData:
     date: str = ""
 
 
-_FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(.+)\.csv$")
+_FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:_(.+))?\.csv$")
+
+# Timestamp-ish prefix for detecting old-format files (no unit row)
+_TS_LIKE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]")
 
 
 def _parse_filename(filepath: str) -> Tuple[str, str]:
@@ -55,7 +56,7 @@ def _parse_filename(filepath: str) -> Tuple[str, str]:
     basename = os.path.basename(filepath)
     m = _FILENAME_RE.match(basename)
     if m:
-        return m.group(1), m.group(2)
+        return m.group(1), m.group(2) or ""
     return "", ""
 
 
@@ -94,6 +95,7 @@ class LogFileReader(QObject):
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Log file not found: {filepath}")
         date_str, device_id = _parse_filename(filepath)
+
         with open(filepath, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             try:
@@ -103,6 +105,24 @@ class LogFileReader(QObject):
             if not raw_headers:
                 raise ValueError("CSV file has empty header row")
             headers = raw_headers
+
+            # Peek at row 2: if it looks like a timestamp, the file is
+            # old-format (no unit row).  Otherwise treat row 2 as a unit
+            # row and skip it.
+            data_start_row = 2
+            try:
+                row2 = next(reader)
+            except StopIteration:
+                row2 = None
+            if row2 and row2[0] and _TS_LIKE_RE.match(row2[0].strip()):
+                # Old format — row 2 is the first data row, re-process it
+                first_data_row = row2
+                data_start_row = 2
+            else:
+                # New format — row 2 is the unit row, skip it
+                first_data_row = None
+                data_start_row = 3
+
             numeric_cols: Dict[int, str] = {}
             for i, h in enumerate(headers):
                 if i == 0:
@@ -110,15 +130,16 @@ class LogFileReader(QObject):
                 numeric_cols[i] = h
             values = {h: [] for h in numeric_cols.values()}
             timestamps = []
-            for row_idx, row in enumerate(reader, start=2):
+
+            def _process_row(row, row_idx):
                 if not row or not row[0].strip():
-                    continue
+                    return
                 ts_str = row[0].strip()
                 try:
                     ts = datetime.fromisoformat(ts_str)
                 except (ValueError, TypeError):
                     logger.debug("Skipping row %d: invalid timestamp %r", row_idx, ts_str)
-                    continue
+                    return
                 timestamps.append(ts)
                 for col_idx, col_name in numeric_cols.items():
                     if col_idx >= len(row):
@@ -133,6 +154,12 @@ class LogFileReader(QObject):
                     except (ValueError, TypeError):
                         val = float("nan")
                     values[col_name].append(val)
+
+            if first_data_row is not None:
+                _process_row(first_data_row, 2)
+
+            for row_idx, row in enumerate(reader, start=data_start_row):
+                _process_row(row, row_idx)
             if timestamps:
                 indexed = list(enumerate(timestamps))
                 indexed.sort(key=lambda x: x[1])
