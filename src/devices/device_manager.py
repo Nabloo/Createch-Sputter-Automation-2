@@ -573,6 +573,10 @@ class DeviceManager:
             if pc.get("y_log", False):
                 plot.set_y_log(True)
 
+            # Restore scatter-point visibility (default True for backward compat)
+            if not pc.get("show_scatters", True):
+                plot.set_show_scatters(False)
+
             # Wire remove button
             plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))
             # Persist state changes (device switch, channel config, etc.)
@@ -811,6 +815,7 @@ class DeviceManager:
                 "visibility": visibility,
                 "history_seconds": plot.history_seconds,
                 "y_log": plot.y_log,
+                "show_scatters": plot.show_scatters,
             })
         set_plot_configs(self._config, plots_data)
         save_config(self._config)

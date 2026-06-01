@@ -485,12 +485,21 @@ class PlotWidget(QWidget):
             if not xs:
                 continue
 
+            # On a log-scaled plot the mouse y-coordinate (my) is in
+            # log10-space (the ViewBox maps data coordinates through
+            # log10).  Convert raw y-values to log10 so the distance
+            # calculation uses compatible units.
+            if self._y_log:
+                cmp_ys = [math.log10(y) if y > 0 else float("-inf") for y in ys]
+            else:
+                cmp_ys = ys
+
             # Binary search for the nearest x-index
             idx = bisect.bisect_left(xs, mx)
             for i in (idx, idx - 1):
                 if 0 <= i < len(xs):
                     dx = xs[i] - mx
-                    dy = ys[i] - my
+                    dy = cmp_ys[i] - my
                     dist = (dx * dx + dy * dy) ** 0.5
                     if dist < best_dist:
                         best_dist = dist
@@ -502,7 +511,7 @@ class PlotWidget(QWidget):
             self._tooltip.hide()
             return
 
-        # ---- format tooltip text ----
+        # ---- format tooltip text (always show raw data value) ----
         channel_name = _channel_legend_name(best_channel)
         if self._x_axis_mode == "absolute":
             x_str = datetime.fromtimestamp(best_x).strftime("%H:%M:%S")
@@ -514,12 +523,15 @@ class PlotWidget(QWidget):
         self._tooltip.setText(text)
 
         # ---- position above the data point ----
+        # On a log-scaled plot the tooltip must be placed at log10(y)
+        # to align with the dot (which is also at log10(y)).
         # anchor (0.5, 1.0) places text centre-bottom at pos, so text
         # appears above the point.  Add a small vertical offset so the
         # marker doesn't overlap the label.
         y_range = view_range[1][1] - view_range[1][0] if view_range[1][1] > view_range[1][0] else 1.0
         y_offset = y_range * 0.04
-        self._tooltip.setPos(best_x, best_y + y_offset)
+        pos_y = math.log10(best_y) if self._y_log else best_y
+        self._tooltip.setPos(best_x, pos_y + y_offset)
         self._tooltip.show()
 
     # ------------------------------------------------------------------
@@ -885,24 +897,6 @@ class PlotWidget(QWidget):
         self._dots_btn.blockSignals(False)
         self._refresh_scatters()
 
-    def set_dark_mode(self, dark: bool) -> None:
-        """Update plot styling to match the application theme."""
-
-        if dark:
-            self._plot.setBackground("#1e1e1e")
-            grid_alpha = 0.3
-            axis_color = "#888888"
-        else:
-            self._plot.setBackground("#ffffff")
-            grid_alpha = 0.15
-            axis_color = "#555555"
-        self._plot.showGrid(x=True, y=True, alpha=grid_alpha)
-        axis_pen = pg.mkPen(color=axis_color, width=1)
-        for axis_name in ("left", "bottom"):
-            axis = self._plot.getAxis(axis_name)
-            axis.setPen(axis_pen)
-            axis.setTextPen(axis_pen)
-
     def set_channel_visibility(self, name: str, visible: bool) -> None:
         """Show or hide a single channel without clearing its data buffer."""
         cfg = self._channels.get(name)
@@ -914,7 +908,7 @@ class PlotWidget(QWidget):
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
 
-    def apply_visibility(self, visibility: Dict[str, bool]) -> None:
+    def apply_channel_visibility(self, visibility: Dict[str, bool]) -> None:
         """Apply a visibility map to all channels (used when restoring from config)."""
         for ch_name, vis in visibility.items():
             if ch_name in self._channels:
