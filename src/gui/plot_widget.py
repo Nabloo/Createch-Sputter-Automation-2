@@ -149,7 +149,7 @@ class PlotWidget(QWidget):
         # ---- Hover tooltip --------------------------------------------------
         self._tooltip: Optional[pg.TextItem] = None
         self._mouse_proxy: Optional[pg.SignalProxy] = None
-        # Cached x/y lists per channel (populated in _update_curve,
+        # Cached x/y lists per channel (populated in _update_curve_data,
         # read in _on_mouse_moved to avoid re-allocating from deques at 60 Hz)
         self._cached_xs: Dict[str, List[float]] = {}
         self._cached_ys: Dict[str, List[float]] = {}
@@ -585,9 +585,8 @@ class PlotWidget(QWidget):
                 if self._t0 is not None:
                     ts_float -= self._t0
                 self._buffers[channel_name].append((ts_float, value))
-            # Only render visible channels; hidden ones stay in buffer only.
-            if self._channels.get(channel_name, {}).get("visible", True):
-                self._refresh_curves(channel_name)
+            # Delegate to _refresh_curves (handles visibility internally).
+            self._refresh_curves(channel_name)
         self._trim_buffers()
 
     def clear(self) -> None:
@@ -974,7 +973,11 @@ class PlotWidget(QWidget):
             self._buffers[channel_name].append((t_rel, value))
 
         self._trim_buffers()
-        self._refresh_curves()
+        # Only refresh curves for visible channels — hidden ones stay in
+        # buffer only and don't need clearing on every data arrival.
+        for channel_name, cfg in self._channels.items():
+            if cfg.get("visible", True):
+                self._refresh_curves(channel_name)
 
     def _on_configure(self) -> None:
         """Open the channel configuration dialog."""
