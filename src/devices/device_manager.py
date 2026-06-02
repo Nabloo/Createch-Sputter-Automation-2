@@ -620,10 +620,14 @@ class DeviceManager:
         existing = list(self._plots.values())
         shared_history = existing[0].history_seconds if existing else 0
 
-        last_plot_id = list(self._plots.keys())[-1].split("_")[-1]
-        try:
-            last_plot_id = int(last_plot_id)
-        except ValueError:
+        if self._plots:
+            last_key = list(self._plots.keys())[-1]
+            last_plot_id = last_key.split("_")[-1]
+            try:
+                last_plot_id = int(last_plot_id)
+            except ValueError:
+                last_plot_id = 0
+        else:
             last_plot_id = 0
 
         dock_id = f"plot_{last_plot_id+1}"
