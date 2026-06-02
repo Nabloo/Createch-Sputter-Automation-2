@@ -567,7 +567,7 @@ class DeviceManager:
             # Restore visibility state from saved config.
             visibility = pc.get("visibility")
             if visibility:
-                plot.apply_visibility(visibility)
+                plot.apply_channel_visibility(visibility)
 
             # Restore y-axis log scale
             if pc.get("y_log", False):
