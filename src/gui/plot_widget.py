@@ -200,7 +200,7 @@ class PlotWidget(QWidget):
         toolbar.addWidget(self._log_btn)
 
         self._dots_btn = QCheckBox("Show Datapoints")
-        self._dots_btn.setChecked(True)
+        self._dots_btn.setChecked(False)
         self._dots_btn.setToolTip("Show/hide data-point markers. If too many are shown, they get reduced.")
         self._dots_btn.toggled.connect(self._on_toggle_show_scatters)
         toolbar.addWidget(self._dots_btn)
@@ -908,7 +908,7 @@ class PlotWidget(QWidget):
         self._plot.enableAutoRange(axis=pg.ViewBox.YAxis)
         self.state_changed.emit()
 
-    def apply_visibility(self, visibility: Dict[str, bool]) -> None:
+    def apply_channel_visibility(self, visibility: Dict[str, bool]) -> None:
         """Apply a visibility map to all channels (used when restoring from config)."""
         for ch_name, vis in visibility.items():
             if ch_name in self._channels:
@@ -1085,7 +1085,7 @@ class PlotWidget(QWidget):
     def _extract_values(data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract scalar values from a measurement dict.
 
-        Handles both flat dicts and VCU-style nested dicts
+        Handles both flat dicts and nested dicts
         (same convention as DataStore._flatten_data).
         """
         flat: Dict[str, Any] = {}
