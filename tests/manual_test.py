@@ -1,46 +1,16 @@
-from src.devices.vcu_controller import (
-    SENSOR_NAMES,
-    STATUS_TEXTS,
-    VCUController,
-    VCUProtocolError,
-)
-import serial
-import threading
-import time
-import unittest
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from pymodbus.client import ModbusTcpClient
 
-from src.acquisition.engine import AcquisitionEngine
-from src.devices.base_device import BaseDevice
+client = ModbusTcpClient('192.168.117.30', port=502)
+client.connect()
 
-VCU_PORT = "COM6"
-VCU_BAUDRATE = 19200
-VCU_ADDRESS = 0
+result = client.read_holding_registers(address=1, count=1, slave=255)
+raw = result.registers[0]
 
+# Values are scaled integers - check if > 32767 (negative number in 16-bit signed)
+if raw > 32767:
+    raw -= 65536
 
-def create_device() -> VCUController:
-    """Create a VCUController configured for the hardware test setup."""
-    return VCUController({
-        "port": VCU_PORT,
-        "baudrate": VCU_BAUDRATE,
-        "address": VCU_ADDRESS,
-        "timeout": 1.0,
-        "number_of_sensors": 3,
-    })
+temperature = raw / 10.0  # typically 1 decimal place scaling
+print(f"Temperature: {temperature} °C")
 
-def print_measurement(device_id, timestamp, data):
-    print("Device_id:", device_id)
-    print("Timestamp:", timestamp)
-    print("Measurement:", data)
-
-vcu = create_device()
-engine = AcquisitionEngine()
-engine.add_device(vcu)
-engine.subscribe(print_measurement)
-engine.start()
-
-time.sleep(10)
-engine.stop()
-engine.remove_device(vcu.device_id)
-
+client.close()
