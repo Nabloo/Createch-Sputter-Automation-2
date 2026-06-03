@@ -166,6 +166,7 @@ class EurothermController(BaseDevice):
                 )
                 for i in range(1, self._number_of_sensors + 1):
                     result[f"ch{i}_temperature"] = float("nan")
+                    result[f"ch{i}_temperature_unit"] = self._unit
                 return result
 
             raw = response.registers[0]
@@ -176,6 +177,7 @@ class EurothermController(BaseDevice):
 
             for i in range(1, self._number_of_sensors + 1):
                 result[f"ch{i}_temperature"] = temperature
+                result[f"ch{i}_temperature_unit"] = self._unit
             return result
 
         except ModbusException as e:
@@ -184,6 +186,7 @@ class EurothermController(BaseDevice):
             )
             for i in range(1, self._number_of_sensors + 1):
                 result[f"ch{i}_temperature"] = float("nan")
+                result[f"ch{i}_temperature_unit"] = self._unit
             return result
 
     # ------------------------------------------------------------------

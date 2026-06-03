@@ -472,6 +472,9 @@ class DeviceManager:
         if "host" not in dev_cfg:
             panel.port_changed.connect(self._on_panel_port_changed)
             panel.baudrate_changed.connect(self._on_panel_baudrate_changed)
+        else:
+            panel.host_changed.connect(self._on_panel_host_changed)
+            panel.modbus_port_changed.connect(self._on_panel_modbus_port_changed)
         area = Qt.LeftDockWidgetArea
         allowedAreas = Qt.LeftDockWidgetArea
         if panel_cfg:
@@ -517,6 +520,30 @@ class DeviceManager:
         update_device_config(self._config, device_id, {"baudrate": new_baudrate})
         save_config(self._config)
         logger.info("Baudrate for %s changed to %d", device_id, new_baudrate)
+
+    def _on_panel_host_changed(self, device_id: str, new_host: str) -> None:
+        """Update device config and device object when the host/IP changes."""
+        device = self._devices.get(device_id)
+        if device is None:
+            return
+        if device.connected:
+            self.disconnect_device(device_id)
+        device._host = new_host
+        update_device_config(self._config, device_id, {"host": new_host})
+        save_config(self._config)
+        logger.info("Host for %s changed to %s", device_id, new_host)
+
+    def _on_panel_modbus_port_changed(self, device_id: str, new_port: int) -> None:
+        """Update device config and device object when the Modbus port changes."""
+        device = self._devices.get(device_id)
+        if device is None:
+            return
+        if device.connected:
+            self.disconnect_device(device_id)
+        device._modbus_port = new_port
+        update_device_config(self._config, device_id, {"modbus_port": new_port})
+        save_config(self._config)
+        logger.info("Modbus port for %s changed to %d", device_id, new_port)
 
     def _build_channel_units_map(self) -> Dict[str, Dict[str, str]]:
         """Build a device_id → {channel → unit} map for all registered devices."""

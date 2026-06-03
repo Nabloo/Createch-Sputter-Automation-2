@@ -187,10 +187,13 @@ class TestPollRegisterValues(unittest.TestCase):
             _mock_register_response([425])
         )
         result = ctrl.poll()
-        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result), 6)
         self.assertAlmostEqual(result["ch1_temperature"], 42.5)
         self.assertAlmostEqual(result["ch2_temperature"], 42.5)
         self.assertAlmostEqual(result["ch3_temperature"], 42.5)
+        self.assertEqual(result["ch1_temperature_unit"], "deg C")
+        self.assertEqual(result["ch2_temperature_unit"], "deg C")
+        self.assertEqual(result["ch3_temperature_unit"], "deg C")
 
     def test_poll_calls_read_holding_registers_correctly(self):
         """Verify the correct Modbus call parameters."""
@@ -259,9 +262,10 @@ class TestPollErrors(unittest.TestCase):
             ModbusException("timeout")
         )
         result = ctrl.poll()
-        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result), 6)
         for ch in ["ch1_temperature", "ch2_temperature", "ch3_temperature"]:
             self.assertTrue(math.isnan(result[ch]))
+            self.assertEqual(result[f"{ch}_unit"], "deg C")
 
 
 # ------------------------------------------------------------------

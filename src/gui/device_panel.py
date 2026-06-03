@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -83,6 +84,8 @@ class DevicePanel(QWidget):
     disconnect_requested = Signal(str)
     port_changed = Signal(str, str)         # device_id, new_port
     baudrate_changed = Signal(str, int)     # device_id, new_baudrate
+    host_changed = Signal(str, str)         # device_id, new_host
+    modbus_port_changed = Signal(str, int)  # device_id, new_modbus_port
     _data_arrived = Signal(str, float, object)
 
     def __init__(
@@ -109,6 +112,7 @@ class DevicePanel(QWidget):
         self._num_channels = num_channels
         self._connected = False
         self._connection_type = connection_type
+        self._last_mbport = modbus_port
 
         # Per-channel value labels and unit labels
         self._value_labels: Dict[str, QLabel] = {}
@@ -267,24 +271,29 @@ class DevicePanel(QWidget):
         self._connection_layout = QHBoxLayout()
         self._connection_layout.setSpacing(8)
 
-        self._host_edit = QLabel(host if host else "—")
+        self._host_edit = QLineEdit(host if host else "")
+        self._host_edit.setPlaceholderText("192.168.1.1")
         self._host_edit.setStyleSheet(
             "font-family: monospace; color: #dcdcde; "
             "background-color: #2a2a2a; padding: 2px 6px; "
             "border: 1px solid #555; border-radius: 3px;"
         )
         self._host_edit.setMinimumWidth(100)
+        self._host_edit.editingFinished.connect(self._on_host_changed)
         self._connection_layout.addWidget(QLabel("Host:"))
         self._connection_layout.addWidget(self._host_edit, 1)
 
-        self._mbport_label = QLabel(str(modbus_port))
-        self._mbport_label.setStyleSheet(
+        self._mbport_edit = QLineEdit(str(modbus_port))
+        self._mbport_edit.setPlaceholderText("502")
+        self._mbport_edit.setFixedWidth(60)
+        self._mbport_edit.setStyleSheet(
             "font-family: monospace; color: #dcdcde; "
             "background-color: #2a2a2a; padding: 2px 6px; "
             "border: 1px solid #555; border-radius: 3px;"
         )
+        self._mbport_edit.editingFinished.connect(self._on_modbus_port_changed)
         self._connection_layout.addWidget(QLabel("Port:"))
-        self._connection_layout.addWidget(self._mbport_label)
+        self._connection_layout.addWidget(self._mbport_edit)
 
     # ------------------------------------------------------------------
     # Public API
@@ -329,6 +338,25 @@ class DevicePanel(QWidget):
         baud = self._baud_combo.currentData()
         if baud:
             self.baudrate_changed.emit(self._device_id, baud)
+
+    def _on_host_changed(self) -> None:
+        """Slot: host/IP field edited."""
+        host = self._host_edit.text().strip()
+        if host:
+            self.host_changed.emit(self._device_id, host)
+
+    def _on_modbus_port_changed(self) -> None:
+        """Slot: Modbus port field edited."""
+        text = self._mbport_edit.text().strip()
+        try:
+            port = int(text)
+            if port > 0:
+                self._last_mbport = port
+                self.modbus_port_changed.emit(self._device_id, port)
+            else:
+                self._mbport_edit.setText(str(self._last_mbport))
+        except ValueError:
+            self._mbport_edit.setText(str(self._last_mbport))
 
     def push_data(
         self,
