@@ -617,9 +617,8 @@ class DeviceManager:
             if pc.get("y_log", False):
                 plot.set_y_log(True)
 
-            # Restore scatter-point visibility (default True for backward compat)
-            if not pc.get("show_scatters", True):
-                plot.set_show_scatters(False)
+            # Restore scatter-point visibility (default False for new plots)
+            plot.set_show_scatters(pc.get("show_scatters", False))
 
             # Wire remove button
             plot.remove_requested.connect(lambda did=dock_id: self.remove_plot(did))

@@ -141,7 +141,7 @@ class PlotWidget(QWidget):
         self._log_curves: Dict[str, List[pg.PlotDataItem]] = {}
         self._x_axis_mode: str = "relative"  # "relative" | "absolute"
         self._y_log: bool = False  # y-axis log scale
-        self._show_scatters: bool = True  # show/hide data-point markers
+        self._show_scatters: bool = False  # show/hide data-point markers (default off)
         # channel_name → ScatterPlotItem (decimated data-point markers)
         self._scatters: Dict[str, pg.ScatterPlotItem] = {}
         # channel_name → single ScatterPlotItem for log-viewer (decimated across all segments)
