@@ -1,0 +1,101 @@
+{
+  "devices": [
+    {
+      "type": "VCUController",
+      "device_id": "VCU-0",
+      "address": 0,
+      "port": "COM5",
+      "baudrate": 19200,
+      "bytesize": 8,
+      "parity": "N",
+      "stopbits": 1,
+      "timeout": 1.0,
+      "write_timeout": 1.0,
+      "reconnect_interval": 3.0,
+      "max_retries": 5,
+      "number_of_sensors": 3,
+      "poll_interval": 1.0
+    },
+    {
+      "type": "SQMController",
+      "device_id": "SQM-0",
+      "address": 0,
+      "port": "COM6",
+      "baudrate": 19200,
+      "timeout": 1.0,
+      "write_timeout": 1.0,
+      "reconnect_interval": 3.0,
+      "max_retries": 5,
+      "number_of_sensors": 1,
+      "poll_interval": 5.0,
+      "units": {
+        "rate": "\u00c5/s",
+        "thickness": "k\u00c5",
+        "frequency": "Hz"
+      }
+    },
+    {
+      "type": "EurothermController",
+      "device_id": "Eurotherm-0",
+      "address": 0,
+      "host": "192.168.117.30",
+      "modbus_port": 502,
+      "slave_id": 255,
+      "timeout": 1.0,
+      "reconnect_interval": 3.0,
+      "max_retries": 5,
+      "number_of_sensors": 1,
+      "poll_interval": 1.0,
+      "unit": "deg C"
+    }
+  ],
+  "logging": {
+    "enabled": true,
+    "directory": "logs",
+    "rotation_enabled": true
+  },
+  "gui": {
+    "theme": "dark",
+    "gap_threshold_seconds": 60.0,
+    "window": {
+      "width": 1169,
+      "height": 969,
+      "x": 271,
+      "y": 0,
+      "maximized": false
+    },
+    "plots": [
+      {
+        "dock_id": "plot_2",
+        "device_id": "VCU-0",
+        "area": "right",
+        "channels": [
+          "ch1_pressure",
+          "ch2_pressure",
+          "ch3_pressure"
+        ],
+        "colours": [
+          "#00bfff",
+          "#ff6b6b",
+          "#51cf66"
+        ],
+        "visibility": {
+          "ch1_pressure": true,
+          "ch2_pressure": false,
+          "ch3_pressure": false
+        },
+        "history_seconds": 0.0,
+        "y_log": true,
+        "show_scatters": false
+      }
+    ],
+    "device_panels": [
+      {
+        "device_id": "VCU-0",
+        "dock_id": "device_VCU-0",
+        "area": "left"
+      }
+    ],
+    "last_log_open_dir": "C:/Users/operator/PycharmProjects/Createch-Sputter-Automation-2/src/logs"
+  }
+}
