@@ -2,7 +2,8 @@
 
 Subscribes to the DataStore and writes every measurement to a single CSV file
 per day named ``logs/YYYY-MM-DD.csv``.  All devices share the same file.
-A new file is created when the day changes (rotation at midnight UTC).
+A new file is created when the day changes (rotation at midnight
+in the detected local timezone).
 
 CSV format (3+ rows):
   Row 1 — clean column names: ``timestamp, VCU-0_ch1_pressure, SQM-0_ch1_rate, …``
@@ -36,7 +37,7 @@ class DataLogger:
     Features
     --------
     - **Daily rotation**: a new file is opened when the date part of the
-      timestamp changes (UTC midnight).
+      timestamp changes (local midnight in the detected timezone).
     - **Buffered writes**: rows are held in memory and flushed every
       *flush_interval* seconds, or when the file is rotated.
     - **Unit row**: row 2 of each file contains measurement units;
@@ -90,13 +91,19 @@ class DataLogger:
         self._flushed_rows: List[Dict[str, Any]] = []
 
         # -------- Timezone resolution --------
-        try:
-            os_tz = datetime.now(timezone.utc).astimezone().tzinfo
-            detected_tz = os_tz if os_tz is not None else timezone(timedelta(hours=2))
-        except Exception:
-            detected_tz = timezone(timedelta(hours=2))
+        # 1. Explicit config override (e.g. for tests)
         tz_offset = log_cfg.get("timezone_offset")
-        self._tz = timezone(timedelta(hours=tz_offset)) if tz_offset is not None else detected_tz
+        if tz_offset is not None:
+            self._tz = timezone(timedelta(hours=tz_offset))
+        else:
+            # 2. Detect from the operating system
+            self._tz = self._detect_local_timezone()
+
+        logger.info(
+            "DataLogger: timezone = %s (UTC offset %s)",
+            self._tz,
+            self._tz.utcoffset(None),
+        )
 
         self._last_flush_time: float = time.monotonic()
 
@@ -107,6 +114,53 @@ class DataLogger:
                 "DataLogger enabled – directory=%s, flush_interval=%.1f s",
                 self._directory, self._flush_interval,
             )
+
+    # ------------------------------------------------------------------
+    # Timezone detection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_local_timezone() -> timezone:
+        """Detect the local timezone from the operating system.
+
+        Tries :meth:`datetime.astimezone` first (works on most platforms).
+        Falls back to the ``time`` module's ``timezone`` / ``daylight``
+        values, which report the standard-offset and DST flag set by the
+        C runtime at process start.
+
+        Returns a fixed-offset :class:`datetime.timezone` representing
+        the *current* UTC offset.  A long-running process that spans a
+        DST transition will keep using the offset captured at startup.
+        """
+        # Primary path: astimezone() uses the OS timezone database.
+        try:
+            local_dt = datetime.now(timezone.utc).astimezone()
+            if local_dt.tzinfo is not None:
+                logger.debug("DataLogger: detected tz via astimezone() → %s", local_dt.tzinfo)
+                return local_dt.tzinfo
+        except Exception:
+            logger.debug("DataLogger: astimezone() failed, falling back to time module")
+
+        # Fallback: use the C runtime's timezone values.
+        #   time.timezone  — seconds WEST of UTC (standard offset)
+        #   time.altzone   — seconds WEST of UTC (DST offset)
+        #   localtime().tm_isdst — positive when DST is active
+        import time as _time
+        local = _time.localtime()
+        if local.tm_isdst > 0:
+            offset_seconds = -_time.altzone
+        else:
+            offset_seconds = -_time.timezone
+
+        fallback_tz = timezone(timedelta(seconds=offset_seconds))
+        logger.warning(
+            "DataLogger: using fallback timezone %s (offset %s, DST=%s). "
+            "Timestamps may be off by one hour around DST transitions.",
+            fallback_tz,
+            fallback_tz.utcoffset(None),
+            local.tm_isdst > 0,
+        )
+        return fallback_tz
 
     # ------------------------------------------------------------------
     # DataStore callback
