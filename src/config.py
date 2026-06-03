@@ -30,6 +30,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
       "poll_interval": 0.5
     },
     {
+      "type": "EurothermController",
+      "device_id": "Eurotherm-0",
+      "address": 0,
+      "host": "192.168.117.30",
+      "modbus_port": 502,
+      "slave_id": 255,
+      "timeout": 1.0,
+      "reconnect_interval": 3.0,
+      "max_retries": 5,
+      "number_of_sensors": 1,
+      "poll_interval": 1.0,
+      "unit": "deg C"
+    },
+    {
       "type": "SQMController",
       "device_id": "SQM-0",
       "address": 0,
@@ -92,6 +106,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
       {
         "device_id": "VCU-0",
         "dock_id": "device_VCU-0",
+        "area": "left"
+      },
+      {
+        "device_id": "Eurotherm-0",
+        "dock_id": "device_Eurotherm-0",
         "area": "left"
       }
     ],

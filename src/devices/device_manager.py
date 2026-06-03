@@ -34,6 +34,7 @@ from src.data_logging.data_logger import DataLogger
 from src.data_logging.log_reader import LogData, LogFileReader
 from src.devices.base_device import BaseDevice
 from src.devices.sqm_controller import SQMController
+from src.devices.eurotherm_controller import EurothermController
 from src.devices.vcu_controller import VCUController
 from src.gui.device_panel import DevicePanel
 from src.gui.plot_widget import PlotWidget
@@ -42,6 +43,7 @@ from src.config import update_device_config
 logger = logging.getLogger(__name__)
 
 _DEVICE_TYPE_MAP: Dict[str, type] = {
+    "EurothermController": EurothermController,
     "SQMController": SQMController,
     "VCUController": VCUController,
 }
@@ -440,21 +442,36 @@ class DeviceManager:
         """Create a DevicePanel and add it to the dock."""
         num_sensors = dev_cfg.get("number_of_sensors", 1)
         dev_type = dev_cfg.get("type", "Unknown")
-        port = dev_cfg.get("port", "")
-        baudrate = dev_cfg.get("baudrate", 9600)
-        available_ports = self.list_available_ports()
         status_channels = device.status_channels if hasattr(device, "status_channels") else []
-        panel = DevicePanel(
-            device.device_id,
-            device_type=dev_type,
-            num_channels=num_sensors,
-            port=port,
-            baudrate=baudrate,
-            available_ports=available_ports,
-            status_channels=status_channels
-        )
-        panel.port_changed.connect(self._on_panel_port_changed)
-        panel.baudrate_changed.connect(self._on_panel_baudrate_changed)
+
+        # Detect Ethernet devices (those with a "host" key) vs serial devices
+        if "host" in dev_cfg:
+            panel = DevicePanel(
+                device.device_id,
+                device_type=dev_type,
+                num_channels=num_sensors,
+                status_channels=status_channels,
+                connection_type="ethernet",
+                host=dev_cfg.get("host", ""),
+                modbus_port=dev_cfg.get("modbus_port", 502),
+            )
+        else:
+            port = dev_cfg.get("port", "")
+            baudrate = dev_cfg.get("baudrate", 9600)
+            available_ports = self.list_available_ports()
+            panel = DevicePanel(
+                device.device_id,
+                device_type=dev_type,
+                num_channels=num_sensors,
+                port=port,
+                baudrate=baudrate,
+                available_ports=available_ports,
+                status_channels=status_channels,
+            )
+        # Only wire serial-specific signals for serial devices
+        if "host" not in dev_cfg:
+            panel.port_changed.connect(self._on_panel_port_changed)
+            panel.baudrate_changed.connect(self._on_panel_baudrate_changed)
         area = Qt.LeftDockWidgetArea
         allowedAreas = Qt.LeftDockWidgetArea
         if panel_cfg:

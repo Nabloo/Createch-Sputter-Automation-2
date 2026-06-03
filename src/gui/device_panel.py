@@ -70,6 +70,13 @@ class DevicePanel(QWidget):
 
         # Wire to DataStore:
         store.subscribe(panel.push_data)
+
+        # Ethernet device (no serial port):
+        panel = DevicePanel(
+            "Eurotherm-0", device_type="EurothermController",
+            connection_type="ethernet", host="192.168.117.30",
+            modbus_port=502,
+        )
     """
 
     connect_requested = Signal(str)
@@ -87,6 +94,9 @@ class DevicePanel(QWidget):
         port: str = "",
         baudrate: int = 9600,
         available_ports: Optional[list] = None,
+        connection_type: str = "serial",
+        host: str = "",
+        modbus_port: int = 502,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -98,12 +108,13 @@ class DevicePanel(QWidget):
         self._device_type = device_type
         self._num_channels = num_channels
         self._connected = False
+        self._connection_type = connection_type
 
         # Per-channel value labels and unit labels
         self._value_labels: Dict[str, QLabel] = {}
         self._unit_labels: Dict[str, QLabel] = {}
 
-        self._build_ui(port, baudrate, available_ports or [])
+        self._build_ui(port, baudrate, available_ports or [], host, modbus_port)
         self._data_arrived.connect(self._on_data_arrived)
 
     # ------------------------------------------------------------------
@@ -115,7 +126,8 @@ class DevicePanel(QWidget):
     # ------------------------------------------------------------------
     _BAUDRATES = [9600, 19200, 38400, 57600, 115200]
 
-    def _build_ui(self, port: str, baudrate: int, available_ports: list) -> None:
+    def _build_ui(self, port: str, baudrate: int, available_ports: list,
+                  host: str = "", modbus_port: int = 502) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
@@ -143,28 +155,13 @@ class DevicePanel(QWidget):
         header.addStretch()
         layout.addLayout(header)
 
-        # ---- Port & Baudrate ----
-        port_layout = QHBoxLayout()
-        port_layout.setSpacing(8)
+        # ---- Connection settings (serial or Ethernet) ----
+        if self._connection_type == "ethernet":
+            self._build_ethernet_ui(host, modbus_port)
+        else:
+            self._build_serial_ui(port, baudrate, available_ports)
 
-        self._port_combo = QComboBox()
-        self._port_combo.setMinimumWidth(100)
-        self._populate_ports(available_ports, port)
-        self._port_combo.currentTextChanged.connect(self._on_port_changed)
-        port_layout.addWidget(QLabel("Port:"))
-        port_layout.addWidget(self._port_combo, 1)
-
-        self._baud_combo = QComboBox()
-        for br in self._BAUDRATES:
-            self._baud_combo.addItem(str(br), br)
-        idx = self._baud_combo.findData(baudrate)
-        if idx >= 0:
-            self._baud_combo.setCurrentIndex(idx)
-        self._baud_combo.currentIndexChanged.connect(self._on_baudrate_changed)
-        port_layout.addWidget(QLabel("Baud:"))
-        port_layout.addWidget(self._baud_combo)
-
-        layout.addLayout(port_layout)
+        layout.addLayout(self._connection_layout)
 
         # ---- Live values ----
         values_group = QGroupBox()
@@ -242,12 +239,61 @@ class DevicePanel(QWidget):
 
         layout.addStretch()
 
+    def _build_serial_ui(self, port: str, baudrate: int,
+                         available_ports: list) -> None:
+        """Build the COM port + baudrate row for serial devices."""
+        self._connection_layout = QHBoxLayout()
+        self._connection_layout.setSpacing(8)
+
+        self._port_combo = QComboBox()
+        self._port_combo.setMinimumWidth(100)
+        self._populate_ports(available_ports, port)
+        self._port_combo.currentTextChanged.connect(self._on_port_changed)
+        self._connection_layout.addWidget(QLabel("Port:"))
+        self._connection_layout.addWidget(self._port_combo, 1)
+
+        self._baud_combo = QComboBox()
+        for br in self._BAUDRATES:
+            self._baud_combo.addItem(str(br), br)
+        idx = self._baud_combo.findData(baudrate)
+        if idx >= 0:
+            self._baud_combo.setCurrentIndex(idx)
+        self._baud_combo.currentIndexChanged.connect(self._on_baudrate_changed)
+        self._connection_layout.addWidget(QLabel("Baud:"))
+        self._connection_layout.addWidget(self._baud_combo)
+
+    def _build_ethernet_ui(self, host: str, modbus_port: int) -> None:
+        """Build the host + Modbus port row for Ethernet devices."""
+        self._connection_layout = QHBoxLayout()
+        self._connection_layout.setSpacing(8)
+
+        self._host_edit = QLabel(host if host else "—")
+        self._host_edit.setStyleSheet(
+            "font-family: monospace; color: #dcdcde; "
+            "background-color: #2a2a2a; padding: 2px 6px; "
+            "border: 1px solid #555; border-radius: 3px;"
+        )
+        self._host_edit.setMinimumWidth(100)
+        self._connection_layout.addWidget(QLabel("Host:"))
+        self._connection_layout.addWidget(self._host_edit, 1)
+
+        self._mbport_label = QLabel(str(modbus_port))
+        self._mbport_label.setStyleSheet(
+            "font-family: monospace; color: #dcdcde; "
+            "background-color: #2a2a2a; padding: 2px 6px; "
+            "border: 1px solid #555; border-radius: 3px;"
+        )
+        self._connection_layout.addWidget(QLabel("Port:"))
+        self._connection_layout.addWidget(self._mbport_label)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def update_available_ports(self, ports: list) -> None:
         """Refresh the COM-port dropdown with a new port list."""
+        if self._connection_type != "serial":
+            return
         current = self._port_combo.currentText()
         self._populate_ports(ports, current)
 
