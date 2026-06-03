@@ -1,14 +1,17 @@
 """Driver for the Eurotherm 3504 temperature controller (read-only).
 
-Implements Modbus TCP protocol for reading process temperature via
-holding register 1.  This is the first Ethernet-based device driver �
-BaseDevice's serial infrastructure is overridden at connect/disconnect.
+Implements Modbus TCP protocol for reading process temperature and
+target setpoint via holding registers 1 and 2.  This is the first
+Ethernet-based device driver - BaseDevice's serial infrastructure
+is overridden at connect/disconnect.
 
 Protocol summary (from manual + manual_test.py):
   - Modbus TCP, port 502
   - Read Holding Registers (FC 03)
-  - Address 1, 1 register, slave/unit ID 255
-  - 16-bit signed integer, scaled x0.1 (div 10 = deg C)
+  - Register 1: process temperature, 16-bit signed, /10 = deg C
+  - Register 2: target setpoint (Loop.1.Main.TargetSPTarget),
+                same format (16-bit signed, /10 = deg C)
+  - Slave/unit ID 255
 """
 
 import logging
@@ -63,18 +66,27 @@ class EurothermController(BaseDevice):
 
     @property
     def plot_channels(self) -> list[str]:
-        return [f"ch{i}_temperature" for i in range(1, self._number_of_sensors + 1)]
+        chs: list[str] = []
+        for i in range(1, self._number_of_sensors + 1):
+            chs.append(f"ch{i}_temperature")
+            chs.append(f"ch{i}_setpoint")
+        return chs
 
     @property
     def status_channels(self) -> list[str]:
-        return [f"ch{i}_temperature" for i in range(1, self._number_of_sensors + 1)]
+        chs: list[str] = []
+        for i in range(1, self._number_of_sensors + 1):
+            chs.append(f"ch{i}_temperature")
+            chs.append(f"ch{i}_setpoint")
+        return chs
 
     @property
     def channel_units(self) -> Dict[str, str]:
-        return {
-            f"ch{i}_temperature": self._unit
-            for i in range(1, self._number_of_sensors + 1)
-        }
+        units: Dict[str, str] = {}
+        for i in range(1, self._number_of_sensors + 1):
+            units[f"ch{i}_temperature"] = self._unit
+            units[f"ch{i}_setpoint"] = self._unit
+        return units
 
     # ------------------------------------------------------------------
     # Connection management (Modbus TCP overrides)
@@ -137,57 +149,62 @@ class EurothermController(BaseDevice):
     # Data acquisition
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _to_signed(raw: int) -> float:
+        """Convert a 16-bit unsigned register to signed float (/10)."""
+        if raw > 32767:
+            raw -= 65536
+        return raw / 10.0
+
     def poll(self) -> Dict[str, Any]:
-        """Poll the Eurotherm via Modbus TCP and return temperature.
+        """Poll the Eurotherm via Modbus TCP and return temperature + setpoint.
 
         Returns:
-            Dict mapping channel names to temperature values in deg C.
-            Returns float("nan") on communication errors so the plot
-            shows a gap.
+            Dict mapping channel names to temperature and setpoint values
+            in deg C.  Returns float("nan") on communication errors so
+            the plot shows a gap.
 
         Raises:
             ConnectionError: if device is not connected.
         """
-        # Grab a local reference so disconnect() from another thread
-        # cannot replace self._client with None between the guard and
-        # the Modbus call.
         client = self._client
         if client is None or not self._connected:
             raise ConnectionError(f"{self.device_id} is not connected")
 
         result: Dict[str, Any] = {}
+
+        # Read temperature (register 1) — independent error handling
         try:
-            response = client.read_holding_registers(
+            resp = client.read_holding_registers(
                 address=1, count=1, slave=self._slave_id,
             )
-            if response.isError():
-                logger.warning(
-                    "%s: Modbus read error: %s", self.device_id, response,
-                )
-                for i in range(1, self._number_of_sensors + 1):
-                    result[f"ch{i}_temperature"] = float("nan")
-                    result[f"ch{i}_temperature_unit"] = self._unit
-                return result
-
-            raw = response.registers[0]
-            # Signed 16-bit two's complement conversion
-            if raw > 32767:
-                raw -= 65536
-            temperature = raw / 10.0
-
-            for i in range(1, self._number_of_sensors + 1):
-                result[f"ch{i}_temperature"] = temperature
-                result[f"ch{i}_temperature_unit"] = self._unit
-            return result
-
+            if resp.isError():
+                temperature = float("nan")
+            else:
+                temperature = self._to_signed(resp.registers[0])
         except ModbusException as e:
-            logger.error(
-                "%s: Modbus exception during poll: %s", self.device_id, e,
+            logger.warning("%s: temperature read failed: %s", self.device_id, e)
+            temperature = float("nan")
+
+        # Read setpoint (register 2) — independent error handling
+        try:
+            resp = client.read_holding_registers(
+                address=2, count=1, slave=self._slave_id,
             )
-            for i in range(1, self._number_of_sensors + 1):
-                result[f"ch{i}_temperature"] = float("nan")
-                result[f"ch{i}_temperature_unit"] = self._unit
-            return result
+            if resp.isError():
+                setpoint = float("nan")
+            else:
+                setpoint = self._to_signed(resp.registers[0])
+        except ModbusException as e:
+            logger.warning("%s: setpoint read failed: %s", self.device_id, e)
+            setpoint = float("nan")
+
+        for i in range(1, self._number_of_sensors + 1):
+            result[f"ch{i}_temperature"] = temperature
+            result[f"ch{i}_temperature_unit"] = self._unit
+            result[f"ch{i}_setpoint"] = setpoint
+            result[f"ch{i}_setpoint_unit"] = self._unit
+        return result
 
     # ------------------------------------------------------------------
     # Post-connection verification
@@ -208,9 +225,7 @@ class EurothermController(BaseDevice):
                     f"Modbus read error: {response}"
                 )
             raw = response.registers[0]
-            if raw > 32767:
-                raw -= 65536
-            temp = raw / 10.0
+            temp = self._to_signed(raw)
             logger.info(
                 "%s: verified — temperature = %.1f deg C",
                 self.device_id, temp,

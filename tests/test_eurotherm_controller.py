@@ -68,19 +68,25 @@ class TestProperties(unittest.TestCase):
 
     def test_plot_channels_default(self):
         ctrl = EurothermController(_make_config())
-        self.assertEqual(ctrl.plot_channels, ["ch1_temperature"])
+        self.assertEqual(ctrl.plot_channels, ["ch1_temperature", "ch1_setpoint"])
 
     def test_status_channels_default(self):
         ctrl = EurothermController(_make_config())
-        self.assertEqual(ctrl.status_channels, ["ch1_temperature"])
+        self.assertEqual(ctrl.status_channels, ["ch1_temperature", "ch1_setpoint"])
 
     def test_channel_units_default(self):
         ctrl = EurothermController(_make_config())
-        self.assertEqual(ctrl.channel_units, {"ch1_temperature": "deg C"})
+        self.assertEqual(ctrl.channel_units, {
+            "ch1_temperature": "deg C", "ch1_setpoint": "deg C",
+        })
 
     def test_multi_sensor_channels(self):
         ctrl = EurothermController(_make_config(number_of_sensors=3))
-        expected = ["ch1_temperature", "ch2_temperature", "ch3_temperature"]
+        expected = [
+            "ch1_temperature", "ch1_setpoint",
+            "ch2_temperature", "ch2_setpoint",
+            "ch3_temperature", "ch3_setpoint",
+        ]
         self.assertEqual(ctrl.plot_channels, expected)
         self.assertEqual(ctrl.status_channels, expected)
 
@@ -88,7 +94,10 @@ class TestProperties(unittest.TestCase):
         ctrl = EurothermController(_make_config(number_of_sensors=2))
         self.assertEqual(
             ctrl.channel_units,
-            {"ch1_temperature": "deg C", "ch2_temperature": "deg C"},
+            {
+                "ch1_temperature": "deg C", "ch1_setpoint": "deg C",
+                "ch2_temperature": "deg C", "ch2_setpoint": "deg C",
+            },
         )
 
     def test_connected_initially_false(self):
@@ -117,7 +126,9 @@ class TestProperties(unittest.TestCase):
 
     def test_custom_unit_in_channels(self):
         ctrl = EurothermController(_make_config(unit="K"))
-        self.assertEqual(ctrl.channel_units, {"ch1_temperature": "K"})
+        self.assertEqual(ctrl.channel_units, {
+            "ch1_temperature": "K", "ch1_setpoint": "K",
+        })
 
     def test_port_property_is_synthetic(self):
         """BaseDevice.port returns the synthetic host:port string."""
@@ -134,78 +145,89 @@ class TestPollRegisterValues(unittest.TestCase):
 
     def setUp(self):
         self.ctrl = EurothermController(_make_config())
-        # Simulate a connected state
         self.ctrl._client = MagicMock()
         self.ctrl._connected = True
+        # Default: both registers return [425] (42.5 deg C)
+        self.ctrl._client.read_holding_registers.side_effect = [
+            _mock_register_response([425]),   # register 1 (temperature)
+            _mock_register_response([425]),   # register 2 (setpoint)
+        ]
+
+    def _set_registers(self, temp, setpoint):
+        """Set mock to return specific register values for the next poll()."""
+        self.ctrl._client.read_holding_registers.side_effect = [
+            _mock_register_response([temp]),
+            _mock_register_response([setpoint]),
+        ]
 
     def test_positive_temperature(self):
         """Register value 425 → 42.5 deg C."""
-        self.ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([425])
-        )
+        self._set_registers(425, 300)
         result = self.ctrl.poll()
         self.assertAlmostEqual(result["ch1_temperature"], 42.5)
+        self.assertAlmostEqual(result["ch1_setpoint"], 30.0)
 
     def test_zero_temperature(self):
         """Register value 0 → 0.0 deg C."""
-        self.ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([0])
-        )
+        self._set_registers(0, 0)
         result = self.ctrl.poll()
         self.assertAlmostEqual(result["ch1_temperature"], 0.0)
+        self.assertAlmostEqual(result["ch1_setpoint"], 0.0)
 
     def test_negative_temperature(self):
         """Register value 65486 (≡ -50 signed) → -5.0 deg C."""
-        self.ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([65486])
-        )
+        self._set_registers(65486, 65486)
         result = self.ctrl.poll()
         self.assertAlmostEqual(result["ch1_temperature"], -5.0)
+        self.assertAlmostEqual(result["ch1_setpoint"], -5.0)
 
     def test_max_positive(self):
         """Register value 32767 → 3276.7 deg C."""
-        self.ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([32767])
-        )
+        self._set_registers(32767, 32767)
         result = self.ctrl.poll()
         self.assertAlmostEqual(result["ch1_temperature"], 3276.7)
+        self.assertAlmostEqual(result["ch1_setpoint"], 3276.7)
 
     def test_max_negative(self):
         """Register value 32768 (≡ -32768 signed) → -3276.8 deg C."""
-        self.ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([32768])
-        )
+        self._set_registers(32768, 32768)
         result = self.ctrl.poll()
         self.assertAlmostEqual(result["ch1_temperature"], -3276.8)
+        self.assertAlmostEqual(result["ch1_setpoint"], -3276.8)
 
     def test_multi_sensor_returns_same_value(self):
-        """With 3 sensors, all channels report the same temperature."""
+        """With 3 sensors, all channels report the same temperature and setpoint."""
         ctrl = EurothermController(_make_config(number_of_sensors=3))
         ctrl._client = MagicMock()
         ctrl._connected = True
-        ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([425])
-        )
+        ctrl._client.read_holding_registers.side_effect = [
+            _mock_register_response([425]),   # temperature
+            _mock_register_response([300]),   # setpoint
+        ]
         result = ctrl.poll()
-        self.assertEqual(len(result), 6)
-        self.assertAlmostEqual(result["ch1_temperature"], 42.5)
-        self.assertAlmostEqual(result["ch2_temperature"], 42.5)
-        self.assertAlmostEqual(result["ch3_temperature"], 42.5)
-        self.assertEqual(result["ch1_temperature_unit"], "deg C")
-        self.assertEqual(result["ch2_temperature_unit"], "deg C")
-        self.assertEqual(result["ch3_temperature_unit"], "deg C")
+        self.assertEqual(len(result), 12)
+        for i in range(1, 4):
+            self.assertAlmostEqual(result[f"ch{i}_temperature"], 42.5)
+            self.assertAlmostEqual(result[f"ch{i}_setpoint"], 30.0)
+            self.assertEqual(result[f"ch{i}_temperature_unit"], "deg C")
+            self.assertEqual(result[f"ch{i}_setpoint_unit"], "deg C")
 
     def test_poll_calls_read_holding_registers_correctly(self):
-        """Verify the correct Modbus call parameters."""
+        """Verify the correct Modbus call parameters for both registers."""
         ctrl = EurothermController(_make_config(slave_id=255))
         ctrl._client = MagicMock()
         ctrl._connected = True
-        ctrl._client.read_holding_registers.return_value = (
-            _mock_register_response([100])
-        )
+        ctrl._client.read_holding_registers.side_effect = [
+            _mock_register_response([100]),
+            _mock_register_response([100]),
+        ]
         ctrl.poll()
-        ctrl._client.read_holding_registers.assert_called_once_with(
+        self.assertEqual(ctrl._client.read_holding_registers.call_count, 2)
+        ctrl._client.read_holding_registers.assert_any_call(
             address=1, count=1, slave=255,
+        )
+        ctrl._client.read_holding_registers.assert_any_call(
+            address=2, count=1, slave=255,
         )
 
 
@@ -234,7 +256,7 @@ class TestPollErrors(unittest.TestCase):
             self.ctrl.poll()
 
     def test_returns_nan_on_modbus_exception(self):
-        """ModbusException during read → float('nan')."""
+        """ModbusException during read → float('nan') for both channels."""
         self.ctrl._client = MagicMock()
         self.ctrl._connected = True
         self.ctrl._client.read_holding_registers.side_effect = (
@@ -242,19 +264,36 @@ class TestPollErrors(unittest.TestCase):
         )
         result = self.ctrl.poll()
         self.assertTrue(math.isnan(result["ch1_temperature"]))
+        self.assertTrue(math.isnan(result["ch1_setpoint"]))
 
     def test_returns_nan_on_modbus_error_response(self):
-        """Modbus error response (isError=True) → float('nan')."""
+        """Modbus error response (isError=True) for both registers → float('nan')."""
         self.ctrl._client = MagicMock()
         self.ctrl._connected = True
-        self.ctrl._client.read_holding_registers.return_value = (
-            _mock_error_response()
-        )
+        self.ctrl._client.read_holding_registers.side_effect = [
+            _mock_error_response(),   # temperature error
+            _mock_error_response(),   # setpoint error
+        ]
         result = self.ctrl.poll()
         self.assertTrue(math.isnan(result["ch1_temperature"]))
+        self.assertTrue(math.isnan(result["ch1_setpoint"]))
+
+    def test_setpoint_fails_but_temperature_succeeds(self):
+        """Temperature (register 1) succeeds; setpoint (register 2) fails → temp valid, setpoint NaN."""
+        self.ctrl._client = MagicMock()
+        self.ctrl._connected = True
+        self.ctrl._client.read_holding_registers.side_effect = [
+            _mock_register_response([425]),          # temperature OK
+            ModbusException("setpoint read error"),   # setpoint fails
+        ]
+        result = self.ctrl.poll()
+        self.assertAlmostEqual(result["ch1_temperature"], 42.5)
+        self.assertEqual(result["ch1_temperature_unit"], "deg C")
+        self.assertTrue(math.isnan(result["ch1_setpoint"]))
+        self.assertEqual(result["ch1_setpoint_unit"], "deg C")
 
     def test_multi_sensor_nan_on_error(self):
-        """With 3 sensors, all get NaN on error."""
+        """With 3 sensors, all channels get NaN on error."""
         ctrl = EurothermController(_make_config(number_of_sensors=3))
         ctrl._client = MagicMock()
         ctrl._connected = True
@@ -262,8 +301,9 @@ class TestPollErrors(unittest.TestCase):
             ModbusException("timeout")
         )
         result = ctrl.poll()
-        self.assertEqual(len(result), 6)
-        for ch in ["ch1_temperature", "ch2_temperature", "ch3_temperature"]:
+        self.assertEqual(len(result), 12)
+        for ch in ["ch1_temperature", "ch2_temperature", "ch3_temperature",
+                    "ch1_setpoint", "ch2_setpoint", "ch3_setpoint"]:
             self.assertTrue(math.isnan(result[ch]))
             self.assertEqual(result[f"{ch}_unit"], "deg C")
 
